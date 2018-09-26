@@ -1,0 +1,91 @@
+import matplotlib
+matplotlib.use('Agg')
+import numpy as np           		# Handle matrices
+import random                		# Handling random number generation
+import time                  		# Handling time calculation
+import math
+import matplotlib.pyplot as plt 	# Display graphs
+import os
+
+class PlotFigure(object):
+	
+	def __init__(self, save_name, env, num_task, save_folder):
+		self.env = env
+		self.state_space = env.state_space
+		self.num_task = num_task
+		self.save_name = save_name
+		self.save_folder = save_folder
+
+		if not os.path.isdir(os.path.join(self.save_folder)):
+			os.mkdir(os.path.join(self.save_folder))
+
+	def _plot_point(self, ax, point, angle, length):
+		x, y = point
+
+		endy = length * math.sin(math.radians(angle)) + y
+		endx = length * math.cos(math.radians(angle)) + x
+
+		ax.plot([x, endx], [y, endy], color = 'blue')
+
+	def _plot_star(self, ax, orig, lengths, max_length=0.5, angles=[270, 225, 180, 135, 90, 45, 0, 315]):
+		max_len = max(lengths)
+		for i, angle in enumerate(angles):
+			self._plot_point(ax, orig, angle, lengths[i]*1.0 / max_len * max_length)
+
+	def plot(self, policy, epoch, gradients = None, batch_eps = None):
+		plt.clf()
+
+		if gradients is not None:
+			plt.figure()
+			
+			for index in range(self.num_task):
+				ax = plt.subplot(1, self.num_task, index + 1)
+				plt.title(str(epoch) + "_" + str(np.mean([np.abs(g) for g in gradients[index]])))
+				for y in range(self.env.map_array.shape[0]):
+					for x in range(self.env.map_array.shape[1]):
+						if self.env.MAP[y][x] != 0:
+							self._plot_star(ax, (x, y), policy[x,y,index])
+							plt.plot([x,], [y,], marker='o', markersize=1, color="green")
+						else:
+							plt.scatter(x, y, marker='x', color="red")
+
+			if not os.path.isdir(os.path.join(self.save_folder, self.save_name)):
+				os.mkdir(os.path.join(self.save_folder, self.save_name))
+
+			plt.savefig(os.path.join(self.save_folder, self.save_name, str(epoch) + '.png'), bbox_inches='tight')
+			
+			plt.figure()
+			for index in range(self.num_task):
+				ax = plt.subplot(1, self.num_task, index + 1)
+				plt.title(str(epoch) + "_" + str(np.mean([np.abs(g) for g in gradients[index]])))
+				task_states = batch_eps[index]
+				for y in range(self.env.map_array.shape[0]):
+					for x in range(self.env.map_array.shape[1]):
+						if self.env.MAP[y][x] != 0:
+							plt.plot([x,], [y,], marker='o', markersize=1, color="green")
+						else:
+							plt.scatter(x, y, marker='x', color="red")
+
+				for ep_states in task_states:
+					plt.scatter(ep_states[0][0], ep_states[0][1], marker = '^', s = 30)
+					plt.plot([s[0] for s in ep_states], [s[1] for s in ep_states])
+
+			plt.savefig(os.path.join(self.save_folder, self.save_name, str(epoch) + '_trajectories.png'), bbox_inches='tight')
+
+		else:
+			plt.figure()
+			for index in range(self.num_task):
+				ax = plt.subplot(1, self.num_task, index + 1)
+				plt.title(str(epoch))
+				for y in range(self.env.map_array.shape[0]):
+					for x in range(self.env.map_array.shape[1]):
+						if self.env.MAP[y][x] != 0:
+							self._plot_star(ax, (x, y), policy[x,y,index])
+							plt.plot([x,], [y,], marker='o', markersize=1, color="green")
+						else:
+							plt.scatter(x, y, marker='x', color="red")
+
+			if not os.path.isdir(os.path.join(self.save_folder, self.save_name)):
+				os.mkdir(os.path.join(self.save_folder, self.save_name))
+
+			plt.savefig(os.path.join(self.save_folder, self.save_name, str(epoch) + '.png'), bbox_inches='tight')
