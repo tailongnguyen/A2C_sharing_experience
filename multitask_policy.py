@@ -237,7 +237,7 @@ class MultitaskPolicy(object):
 						try:
 							discounted_rewards[task_idx] += _discount_with_dones(rewards[task_idx][ep_idx] + [last_values[task_idx][ep_idx]], dones[task_idx][ep_idx]+[0], self.gamma)[:-1]
 						except IndexError:
-							print("IndexError at line 239 MultitaskPolicy!")
+							print("IndexError at MultitaskPolicy!")
 							print(states, tasks, actions, rewards, values, dones, last_values)
 							sys.exit()
 					else:
@@ -262,7 +262,6 @@ class MultitaskPolicy(object):
 			#---------------------------------------------------------------------------------------------------------------------#	
 			mb_states, mb_actions, mb_returns, mb_values, rewards = self._make_batch(sess, epoch)
 			#---------------------------------------------------------------------------------------------------------------------#	
-			
 
 			# UPDATE NETWORK
 			#---------------------------------------------------------------------------------------------------------------------#	

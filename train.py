@@ -8,7 +8,7 @@ from network import *
 from multitask_policy import MultitaskPolicy
 from env.terrain import Terrain
 
-ask = input('Would you like to create new log folder?Y/n\n')
+ask = input('Would you like to create new log folder?Y/n ')
 if ask == '' or ask.lower() == 'y':
 	log_name = input("New folder's name: ")
 	TIMER = str(log_name).replace(" ", "_")
@@ -16,7 +16,7 @@ if ask == '' or ask.lower() == 'y':
 else:
 	TIMER = sorted(os.listdir('logs/'))[-1]
 
-def training(test_time, args):
+def training(args):
 	tf.reset_default_graph()
 	
 	if args.share_exp:
@@ -32,18 +32,18 @@ def training(test_time, args):
 						name 					= 'A2C_' + str(i),
 						state_size 				= env.cv_state_onehot.shape[1], 
 						action_size 			= env.action_size, 
-						entropy_coeff 			= args.entropy_coeff,
-						value_function_coeff 	= args.value_function_coeff,
+						entropy_coeff 			= args.ec,
+						value_function_coeff 	= args.vc,
 						max_gradient_norm		= args.max_gradient_norm,
 						alpha 					= args.alpha,
 						epsilon					= args.epsilon,
-						learning_rate			= args.learning_rate,
+						learning_rate			= args.lr,
 						decay 					= args.decay,
 						reuse					= bool(args.share_latent)
 						)
 
 		if args.decay:
-			policy_i.set_lr_decay(args.learning_rate, args.num_epochs * args.num_episode * args.num_iters)
+			policy_i.set_lr_decay(args.lr, args.num_epochs * args.num_episode * args.num_iters)
 		
 		print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i)))))
 		policies.append(policy_i)
@@ -56,24 +56,30 @@ def training(test_time, args):
 	saver = tf.train.Saver()
 
 	log_folder = 'logs/' + TIMER
-	suffix = "_laser_" + str(args.use_laser) + '_immortal_' + str(args.immortal) + "_sharelatent_" + str(args.share_latent) + "_noise_" + str(args.noise_argmax)
+
+	suffix = []
+	for arg in vars(args):
+		if arg != 'num_tests' and arg != 'num_task' and arg != "map_index" and arg != 'plot_model' and arg != 'save_model':
+			suffix.append(arg + '_' + str(getattr(args, arg)))
+
 	if not os.path.isdir(log_folder):
 		os.mkdir(log_folder)
-		os.mkdir(os.path.join(log_folder, 'None' + suffix))
-		os.mkdir(os.path.join(log_folder, 'Share_samples' + suffix))
-		
-	if args.share_exp:
-		writer = tf.summary.FileWriter(os.path.join(log_folder, "Share_samples" + suffix), sess.graph)
+
+	if os.path.isdir(os.path.join(log_folder, suffix)):
+		test_time = len(os.listdir(os.path.join(log_folder, suffix)))
 	else:
-		writer = tf.summary.FileWriter(os.path.join(log_folder, 'None' + suffix), sess.graph)
+		os.mkdir(os.path.join(log_folder, suffix))
+		test_time = 0
+	
+	writer = tf.summary.FileWriter(os.path.join(log_folder, suffix), sess.graph)
 	
 	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
-	tf.summary.scalar(test_name + "_rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
-	tf.summary.scalar(test_name + "_tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "_ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "_vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "_entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "_nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
+	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
+	tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
 
 	write_op = tf.summary.merge_all()
 
@@ -104,32 +110,32 @@ def training(test_time, args):
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Arguments')
-	parser.add_argument('--num_tests', nargs='?', type=int, default = None, 
+	parser.add_argument('--num_tests', nargs='?', type=int, default = 1, 
 						help='Number of test to run')
 	parser.add_argument('--map_index', nargs='?', type=int, default = None, 
 						help='Index of map'),
-	parser.add_argument('--num_task', nargs='?', type=int, default = 2, 
+	parser.add_argument('--num_task', nargs='?', type=int, default = 1, 
     					help='Number of tasks to train on')
 	parser.add_argument('--share_exp', nargs='?', type=int, default = 0, 
     					help='Whether to turn on sharing samples on training')
-	parser.add_argument('--share_latent', nargs='?', type=int, default = 0,
+	parser.add_argument('--share_latent', nargs='?', type=int, default = 1,
 						help='Whether to join the latent spaces of actor and critic')
 	parser.add_argument('--immortal', nargs='?', type=int, default = 0,
 						help='Whether the agent dies when touching the wall, aka done episode')
-	parser.add_argument('--num_episode', nargs='?', type=int, default = None,
+	parser.add_argument('--num_episode', nargs='?', type=int, default = 10,
     					help='Number of episodes to sample in each epoch')
 	parser.add_argument('--num_iters', nargs='?', type=int, default = None,
 						help='Number of steps to be sampled in each episode')
-	parser.add_argument('--learning_rate', nargs='?', type=float, default = 5e-4,
+	parser.add_argument('--lr', nargs='?', type=float, default = 0.005,
 						help='Learning rate')
 	parser.add_argument('--use_laser', nargs='?', type=int, default = 0,
 						help='Whether to use laser as input observation instead of one-hot vector')
-	parser.add_argument('--num_epochs', nargs='?', type=int, default = None,
+	parser.add_argument('--num_epochs', nargs='?', type=int, default = 100000,
 						help='Number of epochs to train')
-	parser.add_argument('--entropy_coeff', nargs='?', type=float, default = 0.01,
-						help='')
-	parser.add_argument('--value_function_coeff', nargs='?', type=float, default = 0.5,
-						help='')
+	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
+						help='Entropy coeff in total loss')
+	parser.add_argument('--vc', nargs='?', type=float, default = 0.5,
+						help='Value loss coeff in total loss')
 	parser.add_argument('--max_gradient_norm', nargs='?', type=float, default = None,
 						help='')
 	parser.add_argument('--alpha', nargs='?', type=float, default = 0.99,
@@ -138,7 +144,7 @@ if __name__ == '__main__':
 						help='Optimizer params')
 	parser.add_argument('--plot_model', nargs='?', type=int, default = 500,
 						help='Plot interval')
-	parser.add_argument('--decay', nargs='?', type=int, default = 1,
+	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')
 	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 1,
 						help='Whether touse noise argmax in action sampling')
@@ -148,7 +154,7 @@ if __name__ == '__main__':
 
 	start = time.time()
 	for i in range(args.num_tests):
-		training(i, args)
+		training(args)
 
 	print("Done in {} hours".format((time.time() - start)/3600))
 
