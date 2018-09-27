@@ -2,6 +2,7 @@ import tensorflow as tf
 import os 
 import time
 import argparse
+import sys
 
 from datetime import datetime
 from network import *
@@ -45,9 +46,9 @@ def training(args):
 		if args.decay:
 			policy_i.set_lr_decay(args.lr, args.num_epochs * args.num_episode * args.num_iters)
 		
-		print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i)))))
+		print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i), True))))
 		policies.append(policy_i)
-
+		
 	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
 
 	sess = tf.Session(config = tf.ConfigProto(gpu_options = gpu_options))
@@ -61,6 +62,8 @@ def training(args):
 	for arg in vars(args):
 		if arg != 'num_tests' and arg != 'num_task' and arg != "map_index" and arg != 'plot_model' and arg != 'save_model':
 			suffix.append(arg + '_' + str(getattr(args, arg)))
+
+	suffix = '-'.join(suffix)
 
 	if not os.path.isdir(log_folder):
 		os.mkdir(log_folder)
@@ -94,12 +97,14 @@ def training(args):
 										num_episode 		= args.num_episode,
 										num_epochs			= args.num_epochs,
 										gamma 				= 0.99,
+										lamb				= 0.95,
 										plot_model 			= args.plot_model,
 										save_model 			= args.save_model,
 										save_name 			= network_name_scope + suffix,
 										share_exp 			= args.share_exp,
 										immortal			= args.immortal,
 										use_laser			= args.use_laser,
+										use_gae				= args.use_gae,
 										noise_argmax		= args.noise_argmax,
 										timer 				= TIMER
 									)
@@ -130,6 +135,8 @@ if __name__ == '__main__':
 						help='Learning rate')
 	parser.add_argument('--use_laser', nargs='?', type=int, default = 0,
 						help='Whether to use laser as input observation instead of one-hot vector')
+	parser.add_argument('--use_gae', nargs='?', type=int, default = 0,
+						help='Whether to use generalized advantage estimate')
 	parser.add_argument('--num_epochs', nargs='?', type=int, default = 100000,
 						help='Number of epochs to train')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
@@ -142,7 +149,7 @@ if __name__ == '__main__':
 						help='Optimizer params')
 	parser.add_argument('--epsilon', nargs='?', type=float, default = 1e-5,
 						help='Optimizer params')
-	parser.add_argument('--plot_model', nargs='?', type=int, default = 500,
+	parser.add_argument('--plot_model', nargs='?', type=int, default = 5000,
 						help='Plot interval')
 	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')

@@ -143,11 +143,7 @@ class A2C():
                 print(len(variables), variables)
             return variables
 
-    def learn(self, sess, states, actions, returns, values):
-        # Here we calculate advantage A(s,a) = R + yV(s') - V(s)
-        # rewards = R + yV(s')
-        advs = returns - values
-
+    def learn(self, sess, states, actions, returns, advantages):
         if self.decay:
             for i in range(len(states)):
                 current_learning_rate = self.learning_rate_decayed.value()
@@ -159,7 +155,7 @@ class A2C():
                         self.critic.inputs: states, 
                         self.critic.returns: returns,
                         self.actor.actions: actions, 
-                        self.actor.advantages: advs,
+                        self.actor.advantages: advantages,
                         self.learning_rate: current_learning_rate,
                     }
         try:
@@ -172,7 +168,7 @@ class A2C():
             print("States: ", states)
             print("Returns: ", returns)
             print("Actions: ", actions)
-            print("Values: ", values)
+            print("Advantages: ", advantages)
             sys.exit()
 
         return policy_loss, value_loss, policy_entropy, total_loss
