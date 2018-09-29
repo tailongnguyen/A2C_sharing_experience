@@ -60,7 +60,8 @@ def training(args):
 
 	suffix = []
 	for arg in vars(args):
-		if arg != 'num_tests' and arg != 'num_task' and arg != "map_index" and arg != 'plot_model' and arg != 'save_model':
+		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon']
+		if arg not in exclude:
 			suffix.append(arg + '_' + str(getattr(args, arg)))
 
 	suffix = '-'.join(suffix)
@@ -102,6 +103,7 @@ def training(args):
 										save_model 			= args.save_model,
 										save_name 			= network_name_scope + suffix,
 										share_exp 			= args.share_exp,
+										share_weight		= args.share_weight,
 										immortal			= args.immortal,
 										use_laser			= args.use_laser,
 										use_gae				= args.use_gae,
@@ -139,6 +141,8 @@ if __name__ == '__main__':
 						help='Whether to use generalized advantage estimate')
 	parser.add_argument('--num_epochs', nargs='?', type=int, default = 100000,
 						help='Number of epochs to train')
+	parser.add_argument('--share_weight', nargs='?', type=float, default = 0.5,
+						help='weight on importance sampling')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
 						help='Entropy coeff in total loss')
 	parser.add_argument('--vc', nargs='?', type=float, default = 0.5,

@@ -10,8 +10,8 @@ Multi-task learning with Advantage Actor Critic  and sharing experience
 
 - See in `train.py`
 - Arguments setting recommendations: 
-	- `num_iters` between 5 and 20, otherwise the variance would be pretty high
-	- `num_epochs` between 50k and 100k
+	- `num_iters` between 5 and 20, otherwise the training will be slowed down
+	- `num_epochs` should converge between 5k and 20k
 	- `num_episodes` between 10 and 20
 
 

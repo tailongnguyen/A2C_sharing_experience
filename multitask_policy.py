@@ -33,6 +33,7 @@ class MultitaskPolicy(object):
 			save_model,
 			save_name,
 			share_exp,
+			share_weight,
 			immortal,
 			use_laser,
 			use_gae,
@@ -64,6 +65,7 @@ class MultitaskPolicy(object):
 		self.batch_eps = [[] for i in range(self.num_task)]
 
 		self.share_exp = share_exp
+		self.share_weight = share_weight
 		self.noise_argmax = noise_argmax
 
 		self.env = Terrain(self.map_index, use_laser, immortal)
@@ -311,7 +313,8 @@ class MultitaskPolicy(object):
 						if self.env.MAP[s[1]][s[0]] == 2:
 
 							act = actions[other_task][idx]	
-							important_weight = current_policy[s[0], s[1], task_idx][act] / current_policy[s[0], s[1], other_task][act]
+							important_weight = self.share_weight * current_policy[s[0], s[1], task_idx][act] + (1 - self.share_weight) *current_policy[s[0], s[1], other_task][act]
+							important_weight = current_policy[s[0], s[1], task_idx][act] / important_weight
 							
 							observations[task_idx].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
 							converted_actions[task_idx].append(self.env.cv_action_onehot[act])
@@ -325,7 +328,8 @@ class MultitaskPolicy(object):
 	def train(self, sess, saver):
 
 		for epoch in range(self.num_epochs):
-			print('[TRAINING {}] state_size {}, action_size {}, epoch {}'.format(self.save_name, self.env.cv_state_onehot.shape[1], self.action_size, epoch), end = '\r', flush = True)
+			print('epoch {}'.format(epoch), end = '\r', flush = True)
+			sys.stdout.flush()
 			
 			# ROLLOUT SAMPLE
 			#---------------------------------------------------------------------------------------------------------------------#	
