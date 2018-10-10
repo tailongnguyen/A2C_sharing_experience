@@ -33,9 +33,8 @@ class Rollout(object):
 
 		self.states, self.tasks, self.actions, self.rewards, self.values, self.dones, self.last_values = [self.holder_factory(self.num_task) for i in range(7)]
 
-	def _rollout_process(self, sess, task, sx, sy, current_policy, current_values, num_iters):
+	def _rollout_process(self, task, sx, sy, current_policy, current_values, num_iters):
 		thread_rollout = RolloutThread(
-									sess = sess,
 									task = task,
 									start_x = sx,
 									start_y = sy,
@@ -60,15 +59,15 @@ class Rollout(object):
 	def holder_factory(self, size):
 		return [ [] for i in range(size) ]
 
-	def rollout_batch(self, sess, current_policy, current_values, epoch):
+	def rollout_batch(self, current_policy, current_values, epoch):
 		self.states, self.tasks, self.actions, self.rewards, self.values, self.dones, self.last_values = [self.holder_factory(self.num_task) for i in range(7)]
 
 		train_threads = []
 		
 		for i in range(self.num_episode):
-			[sx, sy] = self.init_maps[epoch % 1000][i]
+			[sx, sy] = self.init_maps[epoch % len(self.init_maps)][i]
 			for task in range(self.num_task):
-				train_threads.append(threading.Thread(target=self._rollout_process, args=(sess, task, sx, sy, current_policy, current_values, self.num_iters, )))
+				train_threads.append(threading.Thread(target=self._rollout_process, args=(task, sx, sy, current_policy, current_values, self.num_iters, )))
 
 		# start each training thread
 		for t in train_threads:

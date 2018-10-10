@@ -10,7 +10,6 @@ class RolloutThread(object):
 	
 	def __init__(
 		self,
-		sess,
 		task,
 		start_x,
 		start_y,
@@ -22,7 +21,6 @@ class RolloutThread(object):
 		noise_argmax,
 		immortal):
 	
-		self.sess = sess
 		self.task = task
 		self.start_x = start_x
 		self.start_y = start_y
@@ -38,17 +36,17 @@ class RolloutThread(object):
 		self.env.resetgame(self.task, self.start_x, self.start_y)
 		state = self.env.player.getposition()
 
-		step = 0	
+		step = 1
 
 		while True:
 			if step > self.num_steps:
 				break
 
 			if self.noise_argmax:
-				logits = self.policy[state[0], state[1], self.task]
-				action = noise_and_argmax(logits)
+				logit = self.policy[state[0], state[1], self.task, 0]
+				action = noise_and_argmax(logit)
 			else:
-				pi = self.policy[state[0], state[1], self.task]
+				pi = self.policy[state[0], state[1], self.task, 1]
 				action = np.random.choice(range(len(pi)), p = np.array(pi)/ np.sum(pi))  # select action w.r.t the actions prob
 
 			value = self.value_function[state[0], state[1], self.task]

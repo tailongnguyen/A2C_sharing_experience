@@ -86,7 +86,8 @@ class A2C():
                 value_function_coeff, 
                 max_gradient_norm, 
                 alpha, 
-                epsilon, 
+                epsilon,
+                joint_loss = False, 
                 learning_rate = None, 
                 decay = False, 
                 reuse = False):
@@ -99,6 +100,7 @@ class A2C():
         self.reuse = reuse
         self.alpha = alpha
         self.epsilon = epsilon
+        self.joint_loss = joint_loss
 
         # Add this placeholder for having this variable in tensorboard
         self.mean_reward = tf.placeholder(tf.float32)
@@ -116,19 +118,25 @@ class A2C():
         self.fixed_lr = learning_rate
         self.decay = decay
 
-        self.entropy = tf.reduce_mean(openai_entropy(self.actor.logits))
-        self.total_loss = self.actor.policy_loss + self.critic.value_loss * self.value_function_coeff - self.entropy * self.entropy_coeff
-        
-        self.params = self.find_trainable_variables(name)
-        self.grads = tf.gradients(self.total_loss, self.params)
-        if self.max_gradient_norm is not None:
-            self.grads, grad_norm = tf.clip_by_global_norm(self.grads, self.max_gradient_norm)
+        if self.joint_loss:
 
-        # Apply Gradients
-        self.grads = list(zip(self.grads, self.params))
-        optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate, decay=self.alpha,
-                                              epsilon=self.epsilon)
-        self.optimize = optimizer.apply_gradients(self.grads)
+            self.entropy = tf.reduce_mean(openai_entropy(self.actor.logits))
+            self.total_loss = self.actor.policy_loss + self.critic.value_loss * self.value_function_coeff - self.entropy * self.entropy_coeff
+            
+            self.params = self.find_trainable_variables(name)
+            self.grads = tf.gradients(self.total_loss, self.params)
+            if self.max_gradient_norm is not None:
+                self.grads, grad_norm = tf.clip_by_global_norm(self.grads, self.max_gradient_norm)
+
+            # Apply Gradients
+            self.grads = list(zip(self.grads, self.params))
+            optimizer = tf.train.RMSPropOptimizer(learning_rate = self.learning_rate, decay=self.alpha,
+                                                  epsilon=self.epsilon)
+            self.optimize = optimizer.apply_gradients(self.grads)
+
+        else:
+            self.train_opt_policy = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.actor.policy_loss)
+            self.train_opt_value = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.critic.value_loss)
 
     def set_lr_decay(self, lr_rate, nvalues):
         self.learning_rate_decayed = LearningRateDecay(v = lr_rate,
@@ -158,20 +166,30 @@ class A2C():
                         self.actor.advantages: advantages,
                         self.learning_rate: current_learning_rate,
                     }
-        try:
-            policy_loss, value_loss, policy_entropy, total_loss, _ = sess.run(
-                [self.actor.policy_loss, self.critic.value_loss, self.entropy, self.total_loss, self.optimize],
-                feed_dict = feed_dict
-            )
-        except ValueError:
-            import sys
-            print("States: ", states)
-            print("Returns: ", returns)
-            print("Actions: ", actions)
-            print("Advantages: ", advantages)
-            sys.exit()
 
-        return policy_loss, value_loss, policy_entropy, total_loss
+        if self.joint_loss:
+            try:
+                policy_loss, value_loss, policy_entropy, total_loss, _ = sess.run(
+                    [self.actor.policy_loss, self.critic.value_loss, self.entropy, self.total_loss, self.optimize],
+                    feed_dict = feed_dict
+                )
+            except ValueError:
+                import sys
+                print("States: ", states)
+                print("Returns: ", returns)
+                print("Actions: ", actions)
+                print("Advantages: ", advantages)
+                sys.exit()
+
+            return policy_loss, value_loss, policy_entropy, total_loss
+        else:
+            policy_loss, value_loss, _, _ = sess.run(
+                [self.actor.policy_loss, self.critic.value_loss, self.train_opt_policy, self.train_opt_value], 
+                feed_dict = feed_dict)
+
+            return policy_loss, value_loss, None, None
+
+
 
 if __name__ == '__main__':
     a2c = A2C(100, 8, 0.05, 0.5, reuse = True)

@@ -7,6 +7,8 @@ import sys
 from datetime import datetime
 from network import *
 from multitask_policy import MultitaskPolicy
+from runner import Runner
+
 from env.terrain import Terrain
 
 ask = input('Would you like to create new log folder?Y/n ')
@@ -15,7 +17,8 @@ if ask == '' or ask.lower() == 'y':
 	TIMER = str(log_name).replace(" ", "_")
 	# TIMER = str(datetime.now()).replace(' ', '_')
 else:
-	TIMER = sorted(os.listdir('logs/'))[-1]
+	dirs = [d for d in os.listdir('logs/') if os.path.isdir('logs/' + d)]
+	TIMER = sorted(dirs, key=lambda x: os.path.getctime('logs/' + x), reverse=True)[0]
 
 def training(args):
 	tf.reset_default_graph()
@@ -32,12 +35,13 @@ def training(args):
 		policy_i = A2C(
 						name 					= 'A2C_' + str(i),
 						state_size 				= env.cv_state_onehot.shape[1], 
-						action_size 			= env.action_size, 
+						action_size				= env.action_size,
 						entropy_coeff 			= args.ec,
 						value_function_coeff 	= args.vc,
 						max_gradient_norm		= args.max_gradient_norm,
 						alpha 					= args.alpha,
 						epsilon					= args.epsilon,
+						joint_loss				= args.joint_loss,
 						learning_rate			= args.lr,
 						decay 					= args.decay,
 						reuse					= bool(args.share_latent)
@@ -60,9 +64,22 @@ def training(args):
 
 	suffix = []
 	for arg in vars(args):
-		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon']
-		if arg not in exclude:
-			suffix.append(arg + '_' + str(getattr(args, arg)))
+		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon', 'joint_loss']
+		if arg in exclude:
+			continue
+
+		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'multiprocess']
+		if arg in boolean:
+			if getattr(args, arg) != 1:
+				continue
+			else:
+				suffix.append(arg)
+				continue
+
+		if arg in ['share_weight', 'share_decay'] and getattr(args, 'share_exp') == 0:
+			continue
+
+		suffix.append(arg + "_" + str(getattr(args, arg)))
 
 	suffix = '-'.join(suffix)
 
@@ -70,19 +87,23 @@ def training(args):
 		os.mkdir(log_folder)
 
 	if os.path.isdir(os.path.join(log_folder, suffix)):
+		print("Log folder already exists. Continue training ...")
 		test_time = len(os.listdir(os.path.join(log_folder, suffix)))
 	else:
 		os.mkdir(os.path.join(log_folder, suffix))
 		test_time = 0
 	
-	writer = tf.summary.FileWriter(os.path.join(log_folder, suffix), sess.graph)
+	if test_time == 0:
+		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
+	else:
+		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
 	
 	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
 	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
-	tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
+	# tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
+	# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
+	# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
+	# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
 	tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
 
 	write_op = tf.summary.merge_all()
@@ -92,13 +113,12 @@ def training(args):
 										policies 			= policies,
 										writer 				= writer,
 										write_op 			= write_op,
-										action_size 		= 8,
 										num_task 			= args.num_task,
 										num_iters 			= args.num_iters,
 										num_episode 		= args.num_episode,
 										num_epochs			= args.num_epochs,
 										gamma 				= 0.99,
-										lamb				= 0.95,
+										lamb				= 0.96,
 										plot_model 			= args.plot_model,
 										save_model 			= args.save_model,
 										save_name 			= network_name_scope + suffix,
@@ -115,11 +135,69 @@ def training(args):
 	sess.close()
 
 
+def train(args):
+	
+	if args.share_exp:
+		network_name_scope = 'Share_samples'
+	else:
+		network_name_scope = 'None'
+
+	log_folder = 'logs/' + TIMER
+
+	suffix = []
+	for arg in vars(args):
+		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon', 'multiprocess']
+		if arg in exclude:
+			continue
+
+		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'joint_loss']
+		if arg in boolean:
+			if getattr(args, arg) != 1:
+				continue
+			else:
+				suffix.append(arg)
+				continue
+
+		if arg in ['share_weight', 'share_decay'] and getattr(args, 'share_exp') == 0:
+			continue
+
+		suffix.append(arg + "_" + str(getattr(args, arg)))
+
+	suffix = '-'.join(suffix)
+
+	if not os.path.isdir(log_folder):
+		os.mkdir(log_folder)
+
+	if os.path.isdir(os.path.join(log_folder, suffix)):
+		print("Log folder already exists. Continue training ...")
+		test_time = len(os.listdir(os.path.join(log_folder, suffix)))
+	else:
+		os.mkdir(os.path.join(log_folder, suffix))
+		test_time = 0
+	
+	if test_time == 0:
+		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
+	else:
+		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
+	
+	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
+
+	multitask_agent = Runner(args = args,
+							writer = writer,
+							gamma = 0.99,
+							lamb = 0.96,
+							test_name = test_name,
+							save_name = network_name_scope + suffix,
+							timer = TIMER
+							)
+					
+	multitask_agent.train()
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Arguments')
 	parser.add_argument('--num_tests', nargs='?', type=int, default = 1, 
 						help='Number of test to run')
-	parser.add_argument('--map_index', nargs='?', type=int, default = None, 
+	parser.add_argument('--map_index', nargs='?', type=int, default = 4, 
 						help='Index of map'),
 	parser.add_argument('--num_task', nargs='?', type=int, default = 1, 
     					help='Number of tasks to train on')
@@ -139,10 +217,12 @@ if __name__ == '__main__':
 						help='Whether to use laser as input observation instead of one-hot vector')
 	parser.add_argument('--use_gae', nargs='?', type=int, default = 0,
 						help='Whether to use generalized advantage estimate')
-	parser.add_argument('--num_epochs', nargs='?', type=int, default = 100000,
+	parser.add_argument('--num_epochs', nargs='?', type=int, default = 20000,
 						help='Number of epochs to train')
 	parser.add_argument('--share_weight', nargs='?', type=float, default = 0.5,
 						help='weight on importance sampling')
+	parser.add_argument('--share_decay', nargs='?', type=float, default = 1.0,
+						help='threshold when sharing samples')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
 						help='Entropy coeff in total loss')
 	parser.add_argument('--vc', nargs='?', type=float, default = 0.5,
@@ -157,15 +237,23 @@ if __name__ == '__main__':
 						help='Plot interval')
 	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')
-	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 1,
+	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 0,
+						help='Whether touse noise argmax in action sampling')
+	parser.add_argument('--joint_loss', nargs='?', type=int, default = 0,
 						help='Whether touse noise argmax in action sampling')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
 						help='Saving interval')
+	parser.add_argument('--multiprocess', nargs='?', type=int, default = 0,
+						help='Saving interval')
+
 	args = parser.parse_args()
 
 	start = time.time()
 	for i in range(args.num_tests):
-		training(args)
+		if args.multiprocess:
+			train(args)
+		else:
+			training(args)
 
 	print("Done in {} hours".format((time.time() - start)/3600))
 

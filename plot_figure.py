@@ -80,7 +80,7 @@ class PlotFigure(object):
 				for y in range(self.env.map_array.shape[0]):
 					for x in range(self.env.map_array.shape[1]):
 						if self.env.MAP[y][x] != 0:
-							self._plot_star(ax, (x, y), policy[x,y,index])
+							self._plot_star(ax, (x, y), policy[x,y,index, 1])
 							plt.plot([x,], [y,], marker='o', markersize=1, color="green")
 						else:
 							plt.scatter(x, y, marker='x', color="red")

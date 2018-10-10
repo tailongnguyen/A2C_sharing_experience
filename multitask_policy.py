@@ -22,7 +22,6 @@ class MultitaskPolicy(object):
 			policies,
 			writer,
 			write_op,
-			action_size,
 			num_task,
 			num_iters,			
 			num_episode,
@@ -46,7 +45,6 @@ class MultitaskPolicy(object):
 
 		self.writer = writer
 		self.write_op = write_op
-		self.action_size = action_size
 		self.use_gae = use_gae
 
 		self.num_task = num_task
@@ -61,12 +59,11 @@ class MultitaskPolicy(object):
 		self.save_model = save_model
 		self.immortal = immortal
 
-		self.gradients = [[] for i in range(self.num_task)]
-		self.batch_eps = [[] for i in range(self.num_task)]
-
 		self.share_exp = share_exp
 		self.share_weight = share_weight
 		self.noise_argmax = noise_argmax
+
+		self.sharing_decay = 0.9
 
 		self.env = Terrain(self.map_index, use_laser, immortal)
 
@@ -88,26 +85,23 @@ class MultitaskPolicy(object):
 		for task in range(self.num_task):
 			for (x, y) in self.env.state_space:
 				state_index = self.env.state_to_index[y][x]
-				if self.noise_argmax:
-					p = sess.run(
-								self.PGNetwork[task].actor.logits, 
-								feed_dict={
-									self.PGNetwork[task].actor.inputs: [self.env.cv_state_onehot[state_index]],
-								})
-				else:
-					p = sess.run(
-								self.PGNetwork[task].actor.pi, 
-								feed_dict={
-									self.PGNetwork[task].actor.inputs: [self.env.cv_state_onehot[state_index]],
-								})
+				logit = sess.run(
+							self.PGNetwork[task].actor.logits, 
+							feed_dict={
+								self.PGNetwork[task].actor.inputs: [self.env.cv_state_onehot[state_index]],
+							})
+				p = sess.run(
+							self.PGNetwork[task].actor.pi, 
+							feed_dict={
+								self.PGNetwork[task].actor.inputs: [self.env.cv_state_onehot[state_index]],
+							})
 		
-				current_policy[x,y,task] = p.ravel().tolist()
+				current_policy[x,y,task, 0] = logit.ravel().tolist()
+				current_policy[x,y,task, 1] = p.ravel().tolist()
 						
 		
-		if (epoch+1) % self.plot_model == 0 or epoch == 0:
+		if (epoch+1) % self.plot_model == 0:
 			self.plot_figure.plot(current_policy, epoch + 1)
-			# self.gradients = [[] for i in range(self.num_task)]
-			# self.batch_eps = [[] for i in range(self.num_task)]
 						
 		return current_policy
 
@@ -131,70 +125,7 @@ class MultitaskPolicy(object):
 
 		return current_values
 
-	def _process_experience_normalize(self, sess, states, tasks, actions, drewards, current_policy):
-		make_holder = lambda x: [[] for i in range(x)]
-
-		batch_ss, batch_as, batch_drs = [make_holder(self.num_task) for i in range(3)]
-		share_ss, share_as, share_drs = [make_holder(self.num_task) for i in range(3)]
-		samples = {}
-		action_samples = {}
-
-		# break trajectories to samples and put to dictionaries:
-		# samples[state,task] = returns
-		# action_samples = {}
-
-		for i in range(self.num_task):
-			for index, state in enumerate(states[i]):
-				
-				if (state[0], state[1], tasks[i][index]) not in samples:
-					samples[state[0], state[1], tasks[i][index]] = []
-					action_samples[state[0], state[1], tasks[i][index]] = []
-				
-				samples[state[0], state[1], tasks[i][index]].append(drewards[i][index])
-				action_samples[state[0], state[1], tasks[i][index]].append(actions[i][index])
-		
-		# get samples from dictionaries and build trainning batch			
-		for v in samples.keys():
-			state_index = self.env.state_to_index[v[1]][v[0]]
-
-			# normalize discounted rewards
-			# if abs(np.std(samples[v]))>1e-3:
-			# 	samples[v] = (np.array(samples[v])-np.mean(samples[v]))/np.std(samples[v])
-			
-			for i, (reward, action) in enumerate(zip(samples[v], action_samples[v])):
-
-				# original samples
-				batch_ss[v[2]].append(self.env.cv_state_onehot[state_index])
-				batch_as[v[2]].append(self.env.cv_action_onehot[action_samples[v][i]])
-
-				# interpolate sharing samples only interpolate samples in sharing areas 
-				if self.share_exp and self.env.MAP[v[1]][v[0]]==2:
-					fx = (current_policy[v[0],v[1],1-v[2]][action]+current_policy[v[0],v[1],v[2]][action])/2
-					batch_drs[v[2]].append(current_policy[v[0],v[1],v[2]][action] * reward / fx)
-
-					share_ss[1-v[2]].append(self.env.cv_state_onehot[state_index])
-					share_as[1-v[2]].append(self.env.cv_action_onehot[action_samples[v][i]])
-
-					share_drs[1-v[2]].append(current_policy[v[0],v[1],1-v[2]][action] * reward / fx)
-				
-				else:
-					batch_drs[v[2]].append(reward)
-
-		return batch_ss, batch_as, batch_drs, share_ss, share_as, share_drs, samples
-	
-
-
 	def _make_batch(self, sess, epoch):
-
-
-		def _discount_rewards(episode_rewards, gamma):
-			discounted_episode_rewards = np.zeros_like(episode_rewards)
-			cumulative = 0.0
-			for i in reversed(range(len(episode_rewards))):
-				cumulative = cumulative * gamma + episode_rewards[i]
-				discounted_episode_rewards[i] = cumulative
-
-			return discounted_episode_rewards.tolist()
 
 		def _discount_with_dones(rewards, dones, gamma):
 			discounted = []
@@ -235,6 +166,7 @@ class MultitaskPolicy(object):
 				# Advantage = delta + gamma *  λ (lambda) * nextnonterminal  * lastgaelam
 				advantages[t] = lastgaelam = delta + gamma * lamb * nextnonterminal * lastgaelam
 
+			# advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-6)
 			return list(advantages)
 
 		current_policy = self._prepare_current_policy(sess, epoch)
@@ -258,7 +190,7 @@ class MultitaskPolicy(object):
 			task_k      [---episode_1---, ..., ---episode_n---],	
 		]
 		'''
-		states, tasks, actions, rewards, values, dones, last_values = self.rollout.rollout_batch(sess, current_policy, current_values, epoch)
+		states, tasks, actions, rewards, values, dones, last_values = self.rollout.rollout_batch(current_policy, current_values, epoch)
 
 		observations = [[] for i in range(self.num_task)]
 		converted_actions = [[] for i in range(self.num_task)]
@@ -293,28 +225,46 @@ class MultitaskPolicy(object):
 
 			for task_idx in range(self.num_task):
 				for ep_idx, ep_rewards in enumerate(rewards[task_idx]):
+
+					if dones[task_idx][ep_idx][-1] == 0:
+						try:
+							returns[task_idx] += _discount_with_dones(ep_rewards + [last_values[task_idx][ep_idx]], dones[task_idx][ep_idx]+[0], self.gamma)[:-1]
+						except IndexError:
+							print("IndexError at MultitaskPolicy!")
+							print(states, actions, rewards, values, dones, last_values)
+							sys.exit()
+					else:
+						returns[task_idx] += _discount_with_dones(ep_rewards, dones[task_idx][ep_idx], self.gamma)
+
 					advantages[task_idx] += _generalized_advantage_estimate(ep_rewards, dones[task_idx][ep_idx], values[task_idx][ep_idx], last_values[task_idx][ep_idx], self.gamma, self.lamb)
 
-				returns[task_idx] = list((np.array(advantages[task_idx]) + np.concatenate(values[task_idx])).astype(np.float32))
+				# returns[task_idx] = list((np.array(advantages[task_idx]) + np.concatenate(values[task_idx])).astype(np.float32))
 
 		for task_idx in range(self.num_task):
-			rewards[task_idx] = np.concatenate(rewards[task_idx])
 			states[task_idx] = np.concatenate(states[task_idx])
 			actions[task_idx] = np.concatenate(actions[task_idx])
 
 		if self.share_exp:
 			assert self.num_task > 1
+			if epoch > 2000:
+				return observations, converted_actions, returns, advantages, rewards
+				
+			# rand = random.random()
+			# if rand > self.sharing_decay ** np.log(epoch):
+			# 	return observations, converted_actions, returns, advantages, rewards
+
 			for task_idx in range(self.num_task):
 				for other_task in range(self.num_task):
 					if other_task == task_idx:
 						continue
 
 					for idx, s in enumerate(states[other_task]):
+							
 						if self.env.MAP[s[1]][s[0]] == 2:
 
 							act = actions[other_task][idx]	
-							important_weight = self.share_weight * current_policy[s[0], s[1], task_idx][act] + (1 - self.share_weight) *current_policy[s[0], s[1], other_task][act]
-							important_weight = current_policy[s[0], s[1], task_idx][act] / important_weight
+							important_weight = self.share_weight * current_policy[s[0], s[1], task_idx, 1][act] + (1 - self.share_weight) * current_policy[s[0], s[1], other_task, 1][act]
+							important_weight = current_policy[s[0], s[1], task_idx, 1][act] / important_weight
 							
 							observations[task_idx].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
 							converted_actions[task_idx].append(self.env.cv_action_onehot[act])
@@ -326,6 +276,7 @@ class MultitaskPolicy(object):
 		
 		
 	def train(self, sess, saver):
+		total_samples = {}
 
 		for epoch in range(self.num_epochs):
 			print('epoch {}'.format(epoch), end = '\r', flush = True)
@@ -342,19 +293,24 @@ class MultitaskPolicy(object):
 			for task_idx in range(self.num_task):
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
 
-				policy_loss, value_loss, policy_entropy, total_loss = self.PGNetwork[task_idx].learn(sess, 
-																										mb_states[task_idx],
-																										mb_actions[task_idx],
-																										mb_returns[task_idx],
-																										mb_advantages[task_idx]
-																									)
+				policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
+																				mb_states[task_idx],
+																				mb_actions[task_idx],
+																				mb_returns[task_idx],
+																				mb_advantages[task_idx]
+																			)
 
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.mean(rewards[task_idx])
-				sum_dict[self.PGNetwork[task_idx].tloss_summary] = total_loss
-				sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
-				sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
-				sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
+				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
+				# sum_dict[self.PGNetwork[task_idx].tloss_summary] = total_loss
+				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
+				# sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
+				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
 				sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
+
+				if task_idx not in total_samples:
+					total_samples[task_idx] = 0
+					
+				total_samples[task_idx] += len(list(np.concatenate(rewards[task_idx])))
 
 			#---------------------------------------------------------------------------------------------------------------------#	
 			
@@ -363,10 +319,9 @@ class MultitaskPolicy(object):
 			#---------------------------------------------------------------------------------------------------------------------#	
 			summary = sess.run(self.write_op, feed_dict = sum_dict)
 
-			self.writer.add_summary(summary, epoch+1)
+			self.writer.add_summary(summary, total_samples[0])
 			self.writer.flush()
 			#---------------------------------------------------------------------------------------------------------------------#	
-
 
 			# SAVE MODEL
 			#---------------------------------------------------------------------------------------------------------------------#	
