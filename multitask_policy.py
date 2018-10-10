@@ -33,7 +33,6 @@ class MultitaskPolicy(object):
 			save_name,
 			share_exp,
 			share_weight,
-			immortal,
 			use_laser,
 			use_gae,
 			noise_argmax,
@@ -57,7 +56,6 @@ class MultitaskPolicy(object):
 		self.save_name = save_name
 		self.plot_model = plot_model
 		self.save_model = save_model
-		self.immortal = immortal
 
 		self.share_exp = share_exp
 		self.share_weight = share_weight
@@ -65,7 +63,7 @@ class MultitaskPolicy(object):
 
 		self.sharing_decay = 0.9
 
-		self.env = Terrain(self.map_index, use_laser, immortal)
+		self.env = Terrain(self.map_index, use_laser)
 
 		assert self.num_task <= self.env.num_task
 
@@ -77,7 +75,43 @@ class MultitaskPolicy(object):
 							map_index = self.map_index, 
 							use_laser = use_laser, 
 							noise_argmax = self.noise_argmax,
-							immortal = immortal)
+							)
+
+	def _discount_rewards(self, episode_rewards, episode_nexts, task, current_value):
+		discounted_episode_rewards = np.zeros_like(episode_rewards)
+		next_value = 0.0
+		if episode_rewards[-1] == 1:
+			next_value = 0.0
+		else:
+			next_value = current_value[episode_nexts[-1][0],episode_nexts[-1][1], task]
+
+		for i in reversed(range(len(episode_rewards))):
+			next_value = episode_rewards[i] + self.gamma * next_value  
+			discounted_episode_rewards[i] = next_value
+
+		return discounted_episode_rewards.tolist()
+
+	def _GAE(self, episode_rewards, episode_states, episode_nexts, task, current_value):
+		ep_GAE = np.zeros_like(episode_rewards)
+		TD_error = np.zeros_like(episode_rewards)
+		lamda=0.96
+
+		next_value = 0.0
+		if episode_rewards[-1] == 1:
+			next_value = 0.0
+		else:
+			next_value = current_value[episode_nexts[-1][0],episode_nexts[-1][1], task]
+
+		for i in reversed(range(len(episode_rewards))):
+			TD_error[i] = episode_rewards[i]+self.gamma*next_value-current_value[episode_states[i][0],episode_states[i][1], task]
+			next_value = current_value[episode_states[i][0],episode_states[i][1], task]
+
+		ep_GAE[len(episode_rewards)-1] = TD_error[len(episode_rewards)-1]
+		weight = self.gamma*lamda
+		for i in reversed(range(len(episode_rewards)-1)):
+			ep_GAE[i] += TD_error[i]+weight*ep_GAE[i+1]
+
+		return ep_GAE.tolist()	
 
 	def _prepare_current_policy(self, sess, epoch):
 		current_policy = {}
@@ -156,14 +190,14 @@ class MultitaskPolicy(object):
 					# V(t+1)
 					nextvalue = last_value
 				else:
-					nextnonterminal = 1.0 - dones[t+1]
+					nextnonterminal = 1.0 - dones[t]
 
 					nextvalue = values[t+1]
 
 				# Delta = R(t) + gamma * V(t+1) * nextnonterminal  - V(t)
 				delta = rewards[t] + gamma * nextvalue * nextnonterminal - values[t]
 
-				# Advantage = delta + gamma *  λ (lambda) * nextnonterminal  * lastgaelam
+				# Advantage = delta + gamma *  (lambda) * nextnonterminal  * lastgaelam
 				advantages[t] = lastgaelam = delta + gamma * lamb * nextnonterminal * lastgaelam
 
 			# advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-6)
@@ -190,7 +224,7 @@ class MultitaskPolicy(object):
 			task_k      [---episode_1---, ..., ---episode_n---],	
 		]
 		'''
-		states, tasks, actions, rewards, values, dones, last_values = self.rollout.rollout_batch(current_policy, current_values, epoch)
+		states, tasks, actions, rewards, next_states = self.rollout.rollout_batch(current_policy, epoch)
 
 		observations = [[] for i in range(self.num_task)]
 		converted_actions = [[] for i in range(self.num_task)]
@@ -205,38 +239,47 @@ class MultitaskPolicy(object):
 		if not self.use_gae:
 
 			for task_idx in range(self.num_task):
-				for ep_idx, ep_rewards in enumerate(rewards[task_idx]):
+				for ep_idx, (ep_rewards, ep_states, ep_next_states) in enumerate(zip(rewards[task_idx], states[task_idx], next_states[task_idx])):
+					ep_dones = list(np.zeros_like(ep_rewards))
 
-					if dones[task_idx][ep_idx][-1] == 0:
-						try:
-							returns[task_idx] += _discount_with_dones(ep_rewards + [last_values[task_idx][ep_idx]], dones[task_idx][ep_idx]+[0], self.gamma)[:-1]
-						except IndexError:
-							print("IndexError at MultitaskPolicy!")
-							print(states, actions, rewards, values, dones, last_values)
-							sys.exit()
+					if ep_rewards[-1] != 1:
+						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+						ep_returns = _discount_with_dones(ep_rewards + [last_values[task_idx][ep_idx]], dones[task_idx][ep_idx]+[0], self.gamma)[:-1]
 					else:
-						returns[task_idx] += _discount_with_dones(ep_rewards, dones[task_idx][ep_idx], self.gamma)
+						ep_returns += _discount_with_dones(ep_rewards, dones[task_idx][ep_idx], self.gamma)
 
-				# Here we calculate advantage A(s,a) = R + yV(s') - V(s)
-		    	# rewards = R + yV(s')
-				advantages[task_idx] = list((np.array(returns[task_idx]) - np.concatenate(values[task_idx])).astype(np.float32))
+					returns[task_idx] += ep_returns
+					ep_values = [current_values[s[0], s[1], task_idx] for s in ep_states]
+
+					# Here we calculate advantage A(s,a) = R + yV(s') - V(s)
+			    	# rewards = R + yV(s')
+					advantages[task_idx] += list((np.array(ep_returns) - np.array(ep_values)).astype(np.float32))
 
 		else:
 
 			for task_idx in range(self.num_task):
-				for ep_idx, ep_rewards in enumerate(rewards[task_idx]):
-
-					if dones[task_idx][ep_idx][-1] == 0:
-						try:
-							returns[task_idx] += _discount_with_dones(ep_rewards + [last_values[task_idx][ep_idx]], dones[task_idx][ep_idx]+[0], self.gamma)[:-1]
-						except IndexError:
-							print("IndexError at MultitaskPolicy!")
-							print(states, actions, rewards, values, dones, last_values)
-							sys.exit()
+				for ep_idx, (ep_rewards, ep_states, ep_next_states) in enumerate(zip(rewards[task_idx], states[task_idx], next_states[task_idx])):
+					ep_dones = list(np.zeros_like(ep_rewards))
+					if ep_rewards[-1] != 1:
+						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+						returns[task_idx] += _discount_with_dones(ep_rewards + [last_value], ep_dones+[0], self.gamma)[:-1]
 					else:
-						returns[task_idx] += _discount_with_dones(ep_rewards, dones[task_idx][ep_idx], self.gamma)
 
-					advantages[task_idx] += _generalized_advantage_estimate(ep_rewards, dones[task_idx][ep_idx], values[task_idx][ep_idx], last_values[task_idx][ep_idx], self.gamma, self.lamb)
+						returns[task_idx] += _discount_with_dones(ep_rewards, ep_dones, self.gamma)
+
+					# returns[task_idx] += self._discount_rewards(ep_rewards, ep_next_states, task_idx, current_values)
+					# advantages[task_idx] += self._GAE(ep_rewards, ep_states, ep_next_states, task_idx, current_values)
+
+					if ep_rewards[-1] == 1:
+						ep_dones[-1] = 1
+						last_value = 0
+					else:
+						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+
+					ep_values = [current_values[s[0], s[1], task_idx] for s in ep_states]
+					advantages[task_idx] += _generalized_advantage_estimate(ep_rewards, ep_dones, ep_values, last_value, self.gamma, self.lamb)
+
+				assert len(returns[task_idx]) == len(advantages[task_idx])
 
 				# returns[task_idx] = list((np.array(advantages[task_idx]) + np.concatenate(values[task_idx])).astype(np.float32))
 
@@ -246,8 +289,9 @@ class MultitaskPolicy(object):
 
 		if self.share_exp:
 			assert self.num_task > 1
-			if epoch > 2000:
-				return observations, converted_actions, returns, advantages, rewards
+			
+			# if epoch > 2000:
+				# return observations, converted_actions, returns, advantages, rewards
 				
 			# rand = random.random()
 			# if rand > self.sharing_decay ** np.log(epoch):
@@ -279,8 +323,8 @@ class MultitaskPolicy(object):
 		total_samples = {}
 
 		for epoch in range(self.num_epochs):
-			print('epoch {}'.format(epoch), end = '\r', flush = True)
-			sys.stdout.flush()
+			print('epoch {}'.format(epoch))
+			# sys.stdout.flush()
 			
 			# ROLLOUT SAMPLE
 			#---------------------------------------------------------------------------------------------------------------------#	
@@ -305,7 +349,7 @@ class MultitaskPolicy(object):
 				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
 				# sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
 				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
-				sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
+				# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
 
 				if task_idx not in total_samples:
 					total_samples[task_idx] = 0

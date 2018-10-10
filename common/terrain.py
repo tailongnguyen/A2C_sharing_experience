@@ -38,7 +38,7 @@ class Terrain:
         for i, s in enumerate(self.state_space):
             self.state_to_index[s[1]][s[0]] = i
         
-        assert np.sum(self.state_to_index != -1) == len(self.state_space), print(np.sum(self.state_to_index != -1))
+        assert np.sum(self.state_to_index != -1) == len(self.state_space)
 
         self.action_size = 8
         self.reward_range = 1.0

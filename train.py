@@ -11,11 +11,12 @@ from runner import Runner
 
 from env.terrain import Terrain
 
-ask = input('Would you like to create new log folder?Y/n ')
+# ask = input('Would you like to create new log folder?Y/n ')
+ask  = ''
 if ask == '' or ask.lower() == 'y':
-	log_name = input("New folder's name: ")
-	TIMER = str(log_name).replace(" ", "_")
-	# TIMER = str(datetime.now()).replace(' ', '_')
+	# log_name = input("New folder's name: ")
+	# TIMER = str(log_name).replace(" ", "_")
+	TIMER = str(datetime.now()).replace(' ', '_')
 else:
 	dirs = [d for d in os.listdir('logs/') if os.path.isdir('logs/' + d)]
 	TIMER = sorted(dirs, key=lambda x: os.path.getctime('logs/' + x), reverse=True)[0]
@@ -28,7 +29,7 @@ def training(args):
 	else:
 		network_name_scope = 'None'
 
-	env = Terrain(args.map_index, args.use_laser, args.immortal)
+	env = Terrain(args.map_index, args.use_laser)
 	policies = []
 	
 	for i in range(args.num_task):
@@ -104,7 +105,7 @@ def training(args):
 	# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
+	# tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
 
 	write_op = tf.summary.merge_all()
 
@@ -124,7 +125,6 @@ def training(args):
 										save_name 			= network_name_scope + suffix,
 										share_exp 			= args.share_exp,
 										share_weight		= args.share_weight,
-										immortal			= args.immortal,
 										use_laser			= args.use_laser,
 										use_gae				= args.use_gae,
 										noise_argmax		= args.noise_argmax,
@@ -205,8 +205,6 @@ if __name__ == '__main__':
     					help='Whether to turn on sharing samples on training')
 	parser.add_argument('--share_latent', nargs='?', type=int, default = 1,
 						help='Whether to join the latent spaces of actor and critic')
-	parser.add_argument('--immortal', nargs='?', type=int, default = 0,
-						help='Whether the agent dies when touching the wall, aka done episode')
 	parser.add_argument('--num_episode', nargs='?', type=int, default = 10,
     					help='Number of episodes to sample in each epoch')
 	parser.add_argument('--num_iters', nargs='?', type=int, default = None,
@@ -217,7 +215,7 @@ if __name__ == '__main__':
 						help='Whether to use laser as input observation instead of one-hot vector')
 	parser.add_argument('--use_gae', nargs='?', type=int, default = 0,
 						help='Whether to use generalized advantage estimate')
-	parser.add_argument('--num_epochs', nargs='?', type=int, default = 20000,
+	parser.add_argument('--num_epochs', nargs='?', type=int, default = 2000,
 						help='Number of epochs to train')
 	parser.add_argument('--share_weight', nargs='?', type=float, default = 0.5,
 						help='weight on importance sampling')

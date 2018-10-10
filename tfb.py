@@ -44,7 +44,8 @@
 # # print(mb_actions)
 # # print(np.array(mb_actions).T)
 
-def _generalized_advantage_estimate(rewards, dones, values, last_value, gamma, lamb = 0.96):
+import numpy as np
+def _generalized_advantage_estimate(rewards, dones, values, last_value, gamma = 0.99, lamb = 0.96):
 	advantages = np.zeros_like(rewards)
 	lastgaelam = 0
 
@@ -64,22 +65,21 @@ def _generalized_advantage_estimate(rewards, dones, values, last_value, gamma, l
 			# V(t+1)
 			nextvalue = last_value
 		else:
-			nextnonterminal = 1.0 - dones[t+1]
+			nextnonterminal = 1.0 - dones[t]
 
 			nextvalue = values[t+1]
 
 		# Delta = R(t) + gamma * V(t+1) * nextnonterminal  - V(t)
 		delta = rewards[t] + gamma * nextvalue * nextnonterminal - values[t]
 
-		# Advantage = delta + gamma *  λ (lambda) * nextnonterminal  * lastgaelam
+		# Advantage = delta + gamma *  (lambda) * nextnonterminal  * lastgaelam
 		advantages[t] = lastgaelam = delta + gamma * lamb * nextnonterminal * lastgaelam
 
 	return list(advantages)
 
-def _GAE(episode_rewards, episode_nexts, task, last_value, gamma = 0.99):
+def _GAE(episode_rewards, values, last_value, gamma = 0.99, lamda=0.96):
 	ep_GAE = np.zeros_like(episode_rewards)
 	TD_error = np.zeros_like(episode_rewards)
-	lamda=0.96
 
 	next_value = 0.0
 	if episode_rewards[-1] == 1:
@@ -88,8 +88,8 @@ def _GAE(episode_rewards, episode_nexts, task, last_value, gamma = 0.99):
 		next_value = last_value
 
 	for i in reversed(range(len(episode_rewards))):
-		TD_error[i] = episode_rewards[i]+gamma*next_value-current_value[episode_states[i][0],episode_states[i][1], task]
-		next_value = current_value[episode_states[i][0],episode_states[i][1], task]
+		TD_error[i] = episode_rewards[i]+gamma*next_value - values[i]
+		next_value = values[i]
 
 	ep_GAE[len(episode_rewards)-1] = TD_error[len(episode_rewards)-1]
 	weight = gamma*lamda
@@ -97,3 +97,11 @@ def _GAE(episode_rewards, episode_nexts, task, last_value, gamma = 0.99):
 		ep_GAE[i] += TD_error[i]+weight*ep_GAE[i+1]
 
 	return ep_GAE.tolist()	
+
+rewards = [0.4, -0.1, 0.5, 0.2, 1]
+values = [0.1, -0.2, 0.3, 0.1, -0.1]
+dones = [0, 0, 0, 0, 1]
+last_value = 0.15
+
+print(_generalized_advantage_estimate(rewards, dones, values, last_value))
+print(_GAE(rewards, values, last_value))

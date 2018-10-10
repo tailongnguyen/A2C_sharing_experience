@@ -18,8 +18,7 @@ class Rollout(object):
 		num_iters,
 		map_index,
 		use_laser,
-		noise_argmax,
-		immortal):
+		noise_argmax):
 		
 		self.num_episode = num_episode
 		self.num_iters = num_iters
@@ -27,47 +26,43 @@ class Rollout(object):
 		self.map_index = map_index
 		self.init_maps = SXSY[self.map_index]
 		self.use_laser = use_laser
-		self.immortal = immortal
 		self.num_task = num_task
 		self.noise_argmax = noise_argmax
 
-		self.states, self.tasks, self.actions, self.rewards, self.values, self.dones, self.last_values = [self.holder_factory(self.num_task) for i in range(7)]
+		self.states, self.tasks, self.actions, self.rewards, self.next_states = [self.holder_factory(self.num_task, self.num_episode) for i in range(5)]
 
-	def _rollout_process(self, task, sx, sy, current_policy, current_values, num_iters):
+	def _rollout_process(self, task, index, sx, sy, current_policy, num_iters):
 		thread_rollout = RolloutThread(
 									task = task,
 									start_x = sx,
 									start_y = sy,
 									num_steps = num_iters,
 									policy = current_policy,
-									value_function = current_values,
 									map_index = self.map_index,
 									use_laser = self.use_laser,
 									noise_argmax = self.noise_argmax,
-									immortal = self.immortal)
+									)
 
-		ep_states, ep_tasks, ep_actions, ep_rewards, ep_values, ep_dones, last_value = thread_rollout.rollout()
+		ep_states, ep_tasks, ep_actions, ep_rewards, ep_next_states = thread_rollout.rollout()
 		
-		self.states[task].append(ep_states)
-		self.tasks[task].append(ep_tasks)
-		self.actions[task].append(ep_actions)
-		self.rewards[task].append(ep_rewards)
-		self.dones[task].append(ep_dones)
-		self.values[task].append(ep_values)
-		self.last_values[task].append(last_value)
+		self.states[task][index] = ep_states
+		self.tasks[task][index] = ep_tasks
+		self.actions[task][index] = ep_actions
+		self.rewards[task][index] = ep_rewards
+		self.next_states[task][index] = ep_next_states
 
-	def holder_factory(self, size):
-		return [ [] for i in range(size) ]
+	def holder_factory(self, num_task, num_episode):
+		return [ [ [] for j in range(num_episode)] for i in range(num_task) ]
 
-	def rollout_batch(self, current_policy, current_values, epoch):
-		self.states, self.tasks, self.actions, self.rewards, self.values, self.dones, self.last_values = [self.holder_factory(self.num_task) for i in range(7)]
+	def rollout_batch(self, current_policy, epoch):
+		self.states, self.tasks, self.actions, self.rewards, self.next_states = [self.holder_factory(self.num_task, self.num_episode) for i in range(5)]
 
 		train_threads = []
 		
-		for i in range(self.num_episode):
-			[sx, sy] = self.init_maps[epoch % len(self.init_maps)][i]
-			for task in range(self.num_task):
-				train_threads.append(threading.Thread(target=self._rollout_process, args=(task, sx, sy, current_policy, current_values, self.num_iters, )))
+		for task in range(self.num_task):
+			for i in range(self.num_episode):
+				[sx, sy] = self.init_maps[epoch % len(self.init_maps)][i]
+				train_threads.append(threading.Thread(target=self._rollout_process, args=(task, i, sx, sy, current_policy, self.num_iters, )))
 
 		# start each training thread
 		for t in train_threads:
@@ -77,4 +72,4 @@ class Rollout(object):
 		for t in train_threads:
 			t.join()		
 
-		return self.states, self.tasks, self.actions, self.rewards, self.values, self.dones, self.last_values
+		return self.states, self.tasks, self.actions, self.rewards, self.next_states

@@ -14,7 +14,7 @@ except ModuleNotFoundError:
     from controller import Player
 
 class Terrain:
-    def __init__(self, map_index, use_laser = False, immortal = False):
+    def __init__(self, map_index, use_laser = False):
         self.MAP = ENV_MAP[map_index]['map']
         self.map_array = np.array(self.MAP, dtype = int)
         self.reward_locs = [list(z) for z in  zip(np.where(self.map_array == 3)[1].tolist(), np.where(self.map_array == 3)[0].tolist())]
@@ -26,14 +26,13 @@ class Terrain:
         for i, s in enumerate(self.state_space):
             self.state_to_index[s[1]][s[0]] = i
         
-        assert np.sum(self.state_to_index != -1) == len(self.state_space), print(np.sum(self.state_to_index != -1))
+        assert np.sum(self.state_to_index != -1) == len(self.state_space)
 
         self.action_size = 8
         self.reward_range = 1.0
         self.reward_goal = 1.0
         
         self.num_task = len(self.reward_locs)
-        self.immortal = immortal
 
         if not use_laser:
             self.cv_state_onehot = np.identity(len(self.state_space), dtype=int)
@@ -71,11 +70,6 @@ class Terrain:
         reward = -0.01
 
         x_pos, y_pos = self.reward_locs[self.task]
-        
-        if not self.immortal and self.MAP[self.player.y][self.player.x] == 0:
-            reward = -1.0 
-            done = True
-            return reward, done
 
         if abs(self.player.x - x_pos) < self.reward_range and abs(self.player.y - y_pos) < self.reward_range:
             reward = self.reward_goal

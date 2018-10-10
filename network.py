@@ -5,7 +5,6 @@ from utils import openai_entropy, mse, LearningRateDecay
 
 class Actor():
     def __init__(self, state_size, action_size, reuse = False):
-        super().__init__()
         self.state_size = state_size
         self.action_size = action_size
 
@@ -44,7 +43,6 @@ class Actor():
 
 class Critic():
     def __init__(self, state_size, reuse = False):
-        super().__init__()
         self.state_size = state_size
 
         with tf.variable_scope('Critic' if not reuse else "ShareLatent" , reuse  = reuse):

@@ -15,23 +15,20 @@ class RolloutThread(object):
 		start_y,
 		num_steps,
 		policy,
-		value_function,
 		map_index,
 		use_laser,
-		noise_argmax,
-		immortal):
+		noise_argmax):
 	
 		self.task = task
 		self.start_x = start_x
 		self.start_y = start_y
 		self.num_steps = num_steps
 		self.policy = policy
-		self.value_function = value_function
 		self.noise_argmax = noise_argmax
-		self.env = Terrain(map_index, use_laser, immortal)
+		self.env = Terrain(map_index, use_laser)
 
 	def rollout(self):
-		states, tasks, actions, rewards_of_episode, values, dones = [], [], [], [], [], []
+		states, tasks, actions, rewards_of_episode, next_states = [], [], [], [], []
 		
 		self.env.resetgame(self.task, self.start_x, self.start_y)
 		state = self.env.player.getposition()
@@ -49,30 +46,23 @@ class RolloutThread(object):
 				pi = self.policy[state[0], state[1], self.task, 1]
 				action = np.random.choice(range(len(pi)), p = np.array(pi)/ np.sum(pi))  # select action w.r.t the actions prob
 
-			value = self.value_function[state[0], state[1], self.task]
-
 			reward, done = self.env.player.action(action)
 			
 			next_state = self.env.player.getposition()
 			
 			# Store results
 			states.append(state)
-			values.append(value)
 			tasks.append(self.task)
-			dones.append(int(done))
 			actions.append(action)
 			rewards_of_episode.append(reward)
 
 			state = next_state
-			
+			next_states.append(next_state)
+
 			if done:   
 				break
 
 			step += 1
 
-		if not dones[-1]:
-			last_value = self.value_function[state[0], state[1], self.task]
-		else:
-			last_value = 0
 
-		return states, tasks, actions, rewards_of_episode, values, dones, last_value
+		return states, tasks, actions, rewards_of_episode, next_states

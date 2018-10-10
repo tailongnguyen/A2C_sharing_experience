@@ -216,7 +216,7 @@ class Runner(object):
 				# Delta = R(t) + gamma * V(t+1) * nextnonterminal  - V(t)
 				delta = rewards[t] + gamma * nextvalue * nextnonterminal - values[t]
 
-				# Advantage = delta + gamma *  λ (lambda) * nextnonterminal  * lastgaelam
+				# Advantage = delta + gamma *  (lambda) * nextnonterminal  * lastgaelam
 				advantages[t] = lastgaelam = delta + gamma * lamb * nextnonterminal * lastgaelam
 
 			return list(advantages)
@@ -338,7 +338,7 @@ class Runner(object):
 
 		num_steps = 0
 		for epoch in range(self.num_epochs):
-			print('epoch {}'.format(epoch), end = '\r', flush = True)
+			print('epoch {}'.format(epoch))
 			sys.stdout.flush()
 			
 			# ROLLOUT SAMPLE
