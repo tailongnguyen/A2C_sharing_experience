@@ -64,6 +64,43 @@ class Terrain:
         self.observation_space = self.cv_state_onehot.shape[1]
         self.action_space = self.cv_action_onehot.shape[1]
 
+        self.min_dist = []
+        for i in range(self.num_task):
+            self.min_dist.append(self.cal_min_dist(i))
+
+    def cal_min_dist(self, task_idx):
+        distance = np.zeros_like(self.map_array)
+        target = [list(z) for z in  zip(np.where(self.map_array == 3)[0].tolist(), np.where(self.map_array == 3)[1].tolist())][task_idx]
+        move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+
+        visisted = {}
+        for i in range(distance.shape[0]):
+            for j in range(distance.shape[1]):
+                visisted[i, j] = False
+
+        queue = []
+        queue.append(target)
+
+        while len(queue) > 0:
+            pos = queue[0]
+            queue = queue[1:]
+
+            visisted[pos[0], pos[1]] = True
+
+            for m in move:
+
+                neighbor = [pos[0] + m[0], pos[1] + m[1]]
+
+                if self.map_array[neighbor[0], neighbor[1]] == 0:
+                    continue 
+
+                if not visisted[neighbor[0], neighbor[1]]:
+                    distance[neighbor[0], neighbor[1]] = distance[pos[0], pos[1]] + 1           
+                    queue.append(neighbor)
+                    visisted[neighbor[0], neighbor[1]] = True
+
+        return distance
+
     def reset(self):
         reached = True
         np.random.seed(int(multiprocessing.current_process().name.split('-')[1]) * int(time.time() * 1000 % 1000))

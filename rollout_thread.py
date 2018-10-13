@@ -64,5 +64,6 @@ class RolloutThread(object):
 
 			step += 1
 
-
-		return states, tasks, actions, rewards_of_episode, next_states
+		redundant_steps = step + self.env.min_dist[self.task][states[-1][1], states[-1][0]] - self.env.min_dist[self.task][self.start_y, self.start_x]
+		
+		return states, tasks, actions, rewards_of_episode, next_states, redundant_steps

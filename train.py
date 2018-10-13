@@ -11,12 +11,10 @@ from runner import Runner
 
 from env.terrain import Terrain
 
-# ask = input('Would you like to create new log folder?Y/n ')
-ask  = ''
+ask = input('Would you like to create new log folder?Y/n ')
 if ask == '' or ask.lower() == 'y':
-	# log_name = input("New folder's name: ")
-	# TIMER = str(log_name).replace(" ", "_")
-	TIMER = str(datetime.now()).replace(' ', '_')
+	log_name = input("New folder's name: ")
+	TIMER = str(datetime.now()).replace(' ', '_').replace(":", '-').split('.')[0] + "_" + str(log_name).replace(" ", "_")
 else:
 	dirs = [d for d in os.listdir('logs/') if os.path.isdir('logs/' + d)]
 	TIMER = sorted(dirs, key=lambda x: os.path.getctime('logs/' + x), reverse=True)[0]
@@ -52,7 +50,16 @@ def training(args):
 			policy_i.set_lr_decay(args.lr, args.num_epochs * args.num_episode * args.num_iters)
 		
 		print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i), True))))
+
+		# policy_i = Other_A2C(state_size = env.cv_state_onehot.shape[1],
+		# 					action_size = env.action_size, 
+		# 					learning_rate = args.lr, 
+		# 					name = str(i))
+
 		policies.append(policy_i)
+
+	variables = tf.trainable_variables()
+	print("Initialized networks, with {} trainable weights.".format(len(variables)))
 		
 	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
 
@@ -65,7 +72,7 @@ def training(args):
 
 	suffix = []
 	for arg in vars(args):
-		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon', 'joint_loss']
+		exclude = ['num_tests', 'map_index', 'plot_model', 'save_model', 'num_epochs', 'max_gradient_norm', 'alpha', 'epsilon', 'joint_loss']
 		if arg in exclude:
 			continue
 
@@ -105,7 +112,7 @@ def training(args):
 	# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
-	# tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in policies], 0))
+	tf.summary.scalar(test_name + "/redundant_steps", tf.reduce_mean([policy.mean_redundant for policy in policies], 0))
 
 	write_op = tf.summary.merge_all()
 
@@ -122,7 +129,7 @@ def training(args):
 										lamb				= 0.96,
 										plot_model 			= args.plot_model,
 										save_model 			= args.save_model,
-										save_name 			= network_name_scope + suffix,
+										save_name 			= test_name + "_" + suffix,
 										share_exp 			= args.share_exp,
 										share_weight		= args.share_weight,
 										use_laser			= args.use_laser,
@@ -146,7 +153,7 @@ def train(args):
 
 	suffix = []
 	for arg in vars(args):
-		exclude = ['num_tests', 'map_index', 'num_task', 'plot_model', 'save_model', 'num_epochs', 'num_episode', 'max_gradient_norm', 'alpha', 'epsilon', 'multiprocess']
+		exclude = ['num_tests', 'map_index', 'plot_model', 'save_model', 'num_epochs', 'max_gradient_norm', 'alpha', 'epsilon', 'multiprocess']
 		if arg in exclude:
 			continue
 
@@ -187,7 +194,7 @@ def train(args):
 							gamma = 0.99,
 							lamb = 0.96,
 							test_name = test_name,
-							save_name = network_name_scope + suffix,
+							save_name = test_name + "_" + suffix,
 							timer = TIMER
 							)
 					
@@ -231,7 +238,7 @@ if __name__ == '__main__':
 						help='Optimizer params')
 	parser.add_argument('--epsilon', nargs='?', type=float, default = 1e-5,
 						help='Optimizer params')
-	parser.add_argument('--plot_model', nargs='?', type=int, default = 5000,
+	parser.add_argument('--plot_model', nargs='?', type=int, default = 1000,
 						help='Plot interval')
 	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')
@@ -253,5 +260,5 @@ if __name__ == '__main__':
 		else:
 			training(args)
 
-	print("Done in {} hours".format((time.time() - start)/3600))
+	print("Done in {} hours".format((time.time() - start)/60))
 

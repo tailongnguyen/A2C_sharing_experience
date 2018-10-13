@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
 import random
 import numpy as np
 from random import randint
@@ -49,6 +50,42 @@ class Terrain:
         self.cv_action_onehot = np.identity(self.action_size, dtype=int)
         self.cv_task_onehot = np.identity(len(self.reward_locs), dtype=int)
         
+        self.min_dist = []
+        for i in range(self.num_task):
+            self.min_dist.append(self.cal_min_dist(i))
+
+    def cal_min_dist(self, task_idx):
+        distance = np.zeros_like(self.map_array)
+        target = [list(z) for z in  zip(np.where(self.map_array == 3)[0].tolist(), np.where(self.map_array == 3)[1].tolist())][task_idx]
+        move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+
+        visisted = {}
+        for i in range(distance.shape[0]):
+            for j in range(distance.shape[1]):
+                visisted[i, j] = False
+
+        queue = []
+        queue.append(target)
+
+        while len(queue) > 0:
+            pos = queue[0]
+            queue = queue[1:]
+
+            visisted[pos[0], pos[1]] = True
+
+            for m in move:
+
+                neighbor = [pos[0] + m[0], pos[1] + m[1]]
+
+                if self.map_array[neighbor[0], neighbor[1]] == 0:
+                    continue 
+
+                if not visisted[neighbor[0], neighbor[1]]:
+                    distance[neighbor[0], neighbor[1]] = distance[pos[0], pos[1]] + 1           
+                    queue.append(neighbor)
+                    visisted[neighbor[0], neighbor[1]] = True
+
+        return distance
 
     def laser(self, x, y):
         assert self.map_array[y][x] != 0
@@ -150,5 +187,5 @@ class Terrain:
             
 if __name__ == '__main__':
     ter = Terrain(4)
-    ter.resetgame(1, 1, 1)
-    ter.plotgame()
+    print(ter.min_dist[0])
+    print(ter.min_dist[1])

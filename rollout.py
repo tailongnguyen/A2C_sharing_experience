@@ -29,7 +29,7 @@ class Rollout(object):
 		self.num_task = num_task
 		self.noise_argmax = noise_argmax
 
-		self.states, self.tasks, self.actions, self.rewards, self.next_states = [self.holder_factory(self.num_task, self.num_episode) for i in range(5)]
+		self.states, self.tasks, self.actions, self.rewards, self.next_states, self.redundant_steps = [self.holder_factory(self.num_task, self.num_episode) for i in range(6)]
 
 	def _rollout_process(self, task, index, sx, sy, current_policy, num_iters):
 		thread_rollout = RolloutThread(
@@ -43,19 +43,20 @@ class Rollout(object):
 									noise_argmax = self.noise_argmax,
 									)
 
-		ep_states, ep_tasks, ep_actions, ep_rewards, ep_next_states = thread_rollout.rollout()
+		ep_states, ep_tasks, ep_actions, ep_rewards, ep_next_states, ep_redundant_steps = thread_rollout.rollout()
 		
 		self.states[task][index] = ep_states
 		self.tasks[task][index] = ep_tasks
 		self.actions[task][index] = ep_actions
 		self.rewards[task][index] = ep_rewards
 		self.next_states[task][index] = ep_next_states
+		self.redundant_steps[task][index] = ep_redundant_steps
 
 	def holder_factory(self, num_task, num_episode):
 		return [ [ [] for j in range(num_episode)] for i in range(num_task) ]
 
 	def rollout_batch(self, current_policy, epoch):
-		self.states, self.tasks, self.actions, self.rewards, self.next_states = [self.holder_factory(self.num_task, self.num_episode) for i in range(5)]
+		self.states, self.tasks, self.actions, self.rewards, self.next_states, self.redundant_steps = [self.holder_factory(self.num_task, self.num_episode) for i in range(6)]
 
 		train_threads = []
 		
@@ -72,4 +73,4 @@ class Rollout(object):
 		for t in train_threads:
 			t.join()		
 
-		return self.states, self.tasks, self.actions, self.rewards, self.next_states
+		return self.states, self.tasks, self.actions, self.rewards, self.next_states, self.redundant_steps

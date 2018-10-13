@@ -27,7 +27,7 @@ class Runner(object):
 			):
 
 		tf.reset_default_graph()
-		self.env = Terrain(args.map_index, args.use_laser, args.immortal)
+		self.env = Terrain(args.map_index, args.use_laser)
 		self.PGNetwork = []
 	
 		for i in range(args.num_task):
@@ -40,6 +40,7 @@ class Runner(object):
 							max_gradient_norm		= args.max_gradient_norm,
 							alpha 					= args.alpha,
 							epsilon					= args.epsilon,
+							joint_loss				= args.joint_loss,
 							learning_rate			= args.lr,
 							decay 					= args.decay,
 							reuse					= bool(args.share_latent)
@@ -50,7 +51,7 @@ class Runner(object):
 
 		self.writer = writer
 		tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in self.PGNetwork], 0))
-		# tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
+		# tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.mean_redundant for policy in self.PGNetwork], 0))
 		# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
 		# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
 		# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
@@ -68,6 +69,7 @@ class Runner(object):
 		self.share_weight = args.share_weight
 		self.noise_argmax = args.noise_argmax
 
+		self.num_episode = args.num_episode
 		self.gamma = gamma
 		self.lamb = lamb
 		self.save_name = save_name
@@ -77,7 +79,7 @@ class Runner(object):
 		self.current_states = [[] for _ in range(self.num_task)]
 
 		for i in range(self.num_task):
-			envs = [make_env(map_index = args.map_index, use_laser = args.use_laser, immortal = args.immortal, task = i) for _ in range(args.num_episode)]
+			envs = [make_env(map_index = args.map_index, use_laser = args.use_laser, immortal = False, task = i) for _ in range(args.num_episode)]
 			self.envs_task.append(SubprocVecEnv(envs))
 			self.current_states[i] = self.envs_task[-1].reset()
 
@@ -104,8 +106,8 @@ class Runner(object):
 				current_policy[x,y,task, 1] = p.ravel().tolist()
 						
 		
-		# if (epoch+1) % self.plot_model == 0 or epoch == 0:
-			# self.plot_figure.plot(current_policy, epoch + 1)
+		if (epoch+1) % self.plot_model == 0:
+			self.plot_figure.plot(current_policy, epoch + 1)
 						
 		return current_policy
 
@@ -209,7 +211,7 @@ class Runner(object):
 					# V(t+1)
 					nextvalue = last_value
 				else:
-					nextnonterminal = 1.0 - dones[t+1]
+					nextnonterminal = 1.0 - dones[t]
 
 					nextvalue = values[t+1]
 
@@ -253,11 +255,11 @@ class Runner(object):
 			raw_task_states[task_idx] = np.concatenate(states, 0)
 			raw_task_actions[task_idx]= np.concatenate(actions, 0)
 
+
 			for ep_idx, ep_states in enumerate(states):
 				task_states[task_idx] += [self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]]  for s in ep_states]
 				task_actions[task_idx] += [self.env.cv_action_onehot[a] for a in actions[ep_idx]]
-
-			rewards_summary[task_idx] = np.sum(np.concatenate(rewards)) / rewards.shape[0]
+				rewards_summary[task_idx].append(list(rewards[ep_idx]))
 						
 			if not self.use_gae:
 
@@ -297,35 +299,44 @@ class Runner(object):
 
 				# task_returns[task_idx] = list((np.array(task_advantages[task_idx]) + np.concatenate(values[task_idx])).astype(np.float32))
 
+		share_observations = [[] for _ in range(self.num_task)]
+		share_actions = [[] for _ in range(self.num_task)]
+		share_advantages = [[] for _ in range(self.num_task)]
+
 		if self.share_exp:
 			assert self.num_task > 1
-			if epoch > 2000:
-				return task_states, task_actions, task_returns, task_advantages, rewards
+
+			# if epoch > 2000:
+			# 	return task_states, task_actions, task_returns, task_advantages, rewards
 				
-			# rand = random.random()
-			# if rand > self.sharing_decay ** np.log(epoch):
-			# 	return observations, converted_actions, returns, advantages, rewards
+			sharing = {}
+			for task_idx in range(self.num_task):
+				sharing[task_idx] = []
+				for idx, s in enumerate(raw_task_states[task_idx]):
+						
+					if self.env.MAP[s[1]][s[0]] == 2:
+
+						act = raw_task_actions[task_idx][idx]	
+						importance_weight = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
+						
+
+						# and share with other tasks
+						for other_task in range(self.num_task):
+							if other_task == task_idx:
+								continue
+
+							share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+							share_actions[other_task].append(self.env.cv_action_onehot[act])
+							share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
+
+						sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / importance_weight))
 
 			for task_idx in range(self.num_task):
-				for other_task in range(self.num_task):
-					if other_task == task_idx:
-						continue
+				for idx, iw in sharing[task_idx]:
+					# we must multiply the advantages of sharing positions with the importance weight and we do it exactly ONE time
+					task_advantages[task_idx][idx] = task_advantages[task_idx][idx] * iw
 
-					for idx, s in enumerate(raw_task_states[other_task]):
-							
-						if self.env.MAP[s[1]][s[0]] == 2:
-
-							act = raw_task_actions[other_task][idx]	
-							important_weight = self.share_weight * current_policy[s[0], s[1], task_idx, 1][act] + (1 - self.share_weight) * current_policy[s[0], s[1], other_task, 1][act]
-							important_weight = current_policy[s[0], s[1], task_idx, 1][act] / important_weight
-							
-							task_states[task_idx].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
-							task_actions[task_idx].append(self.env.cv_action_onehot[act])
-
-							task_returns[task_idx].append(task_returns[other_task][idx] * important_weight)
-							task_advantages[task_idx].append(task_advantages[other_task][idx] * important_weight)
-
-		return task_states, task_actions, task_returns, task_advantages, rewards_summary
+		return task_states, task_actions, task_returns, task_advantages, rewards_summary, share_observations, share_actions, share_advantages
 		
 		
 	def train(self):
@@ -336,14 +347,13 @@ class Runner(object):
 
 		saver = tf.train.Saver()
 
-		num_steps = 0
+		total_samples = {}
 		for epoch in range(self.num_epochs):
-			print('epoch {}'.format(epoch))
-			sys.stdout.flush()
+			print('epoch {}/{}'.format(epoch+1, self.num_epochs), end = '\r', flush = True)
 			
 			# ROLLOUT SAMPLE
 			#---------------------------------------------------------------------------------------------------------------------#	
-			mb_states, mb_actions, mb_returns, mb_advantages, rewards_summary = self._make_batch(sess, epoch)
+			mb_states, mb_actions, mb_returns, mb_advantages, rewards, mbshare_states, mbshare_actions, mbshare_advantages = self._make_batch(sess, epoch)
 			#---------------------------------------------------------------------------------------------------------------------#	
 
 			# UPDATE NETWORK
@@ -352,19 +362,38 @@ class Runner(object):
 			for task_idx in range(self.num_task):
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
 
-				policy_loss, value_loss, policy_entropy, total_loss = self.PGNetwork[task_idx].learn(sess, 
-																										mb_states[task_idx],
-																										mb_actions[task_idx],
-																										mb_returns[task_idx],
-																										mb_advantages[task_idx]
-																									)
+				if not self.share_exp:
+					policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
+																					mb_states[task_idx],
+																					mb_actions[task_idx],
+																					mb_returns[task_idx],
+																					mb_advantages[task_idx]
+																				)
+				else:
+					value_loss = self.PGNetwork[task_idx].learn_critic(sess,
+																			mb_states[task_idx],
+																			mb_returns[task_idx])
+					
+					policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
+																			mb_states[task_idx] + mbshare_states[task_idx],
+																			mb_actions[task_idx] + mbshare_actions[task_idx],
+																			mb_advantages[task_idx] + mbshare_advantages[task_idx])
+					# policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
+					# 														mbshare_states[task_idx],
+					# 														mbshare_actions[task_idx],
+					# 														mbshare_advantages[task_idx])
 
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = rewards_summary[task_idx]
+				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
 				# sum_dict[self.PGNetwork[task_idx].tloss_summary] = total_loss
 				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
 				# sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
 				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
 				# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
+
+				if task_idx not in total_samples:
+					total_samples[task_idx] = 0
+					
+				total_samples[task_idx] += len(list(np.concatenate(rewards[task_idx])))
 
 			#---------------------------------------------------------------------------------------------------------------------#	
 			
@@ -372,9 +401,8 @@ class Runner(object):
 			# WRITE TF SUMMARIES
 			#---------------------------------------------------------------------------------------------------------------------#	
 			summary = sess.run(self.write_op, feed_dict = sum_dict)
-			num_steps += len(mb_states[0])
 
-			self.writer.add_summary(summary, epoch + 1)
+			self.writer.add_summary(summary, total_samples[0])
 			self.writer.flush()
 			#---------------------------------------------------------------------------------------------------------------------#	
 
