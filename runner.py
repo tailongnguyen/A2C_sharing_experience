@@ -27,7 +27,7 @@ class Runner(object):
 			):
 
 		tf.reset_default_graph()
-		self.env = Terrain(args.map_index, args.use_laser)
+		self.env = Terrain(args.map_index, args.use_laser, args.immortal)
 		self.PGNetwork = []
 	
 		for i in range(args.num_task):
@@ -79,7 +79,7 @@ class Runner(object):
 		self.current_states = [[] for _ in range(self.num_task)]
 
 		for i in range(self.num_task):
-			envs = [make_env(map_index = args.map_index, use_laser = args.use_laser, immortal = False, task = i) for _ in range(args.num_episode)]
+			envs = [make_env(map_index = args.map_index, use_laser = args.use_laser, immortal = args.immortal, task = i) for _ in range(args.num_episode)]
 			self.envs_task.append(SubprocVecEnv(envs))
 			self.current_states[i] = self.envs_task[-1].reset()
 
@@ -171,6 +171,8 @@ class Runner(object):
 		mb_rewards = np.array(mb_rewards, dtype = np.float32).T
 		mb_values = np.array(mb_values, dtype = np.float32).T
 		mb_dones = np.array(mb_dones).T
+
+		self.current_states[task] = next_states
 
 		# print("States\n", mb_states)
 		# print("Actions\n", mb_actions)
@@ -305,9 +307,6 @@ class Runner(object):
 
 		if self.share_exp:
 			assert self.num_task > 1
-
-			# if epoch > 2000:
-			# 	return task_states, task_actions, task_returns, task_advantages, rewards
 				
 			sharing = {}
 			for task_idx in range(self.num_task):
@@ -325,9 +324,10 @@ class Runner(object):
 							if other_task == task_idx:
 								continue
 
-							share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
-							share_actions[other_task].append(self.env.cv_action_onehot[act])
-							share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
+							if epoch < 450:
+								share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+								share_actions[other_task].append(self.env.cv_action_onehot[act])
+								share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
 
 						sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / importance_weight))
 

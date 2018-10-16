@@ -108,9 +108,9 @@ def training(args):
 	
 	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
 	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
-	# tf.summary.scalar(test_name + "/tloss", tf.reduce_mean([policy.tloss_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
-	# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
+	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
 	# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
 	tf.summary.scalar(test_name + "/redundant_steps", tf.reduce_mean([policy.mean_redundant for policy in policies], 0))
 
@@ -208,6 +208,8 @@ if __name__ == '__main__':
 						help='Index of map'),
 	parser.add_argument('--num_task', nargs='?', type=int, default = 1, 
     					help='Number of tasks to train on')
+	parser.add_argument('--immortal', nargs='?', type=int, default = 1, 
+    					help='Whether the agent dies when hitting the wall')
 	parser.add_argument('--share_exp', nargs='?', type=int, default = 0, 
     					help='Whether to turn on sharing samples on training')
 	parser.add_argument('--share_latent', nargs='?', type=int, default = 1,
@@ -260,5 +262,5 @@ if __name__ == '__main__':
 		else:
 			training(args)
 
-	print("Done in {} hours".format((time.time() - start)/60))
+	print("Done in {} minutes".format((time.time() - start)/60))
 

@@ -51,12 +51,39 @@ class Terrain:
         self.cv_task_onehot = np.identity(len(self.reward_locs), dtype=int)
         
         self.min_dist = []
+        self.advs = []
         for i in range(self.num_task):
             self.min_dist.append(self.cal_min_dist(i))
+            self.advs.append(self.adv_map(self.min_dist[-1]))
+
+    def adv_map(self, distance):
+        move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+        adv = {}
+
+        for i in range(distance.shape[1]):
+            for j in range(distance.shape[0]):
+                if distance[j][i] == -1:
+                    continue
+
+                for m_i, m in enumerate(move):
+                    x, y = m
+                    if distance[j + y][i + x] == -1:
+                        adv[i, j, m_i] = -2
+                        continue
+                        
+                    if distance[j + y][i + x] < distance[j][i]:
+                        adv[i, j, m_i] = 1
+                    elif distance[j + y][i + x] > distance[j][i]:
+                        adv[i, j, m_i] = -1
+                    else:
+                        adv[i, j, m_i] = 0
+
+        return adv
 
     def cal_min_dist(self, task_idx):
-        distance = np.zeros_like(self.map_array)
+        distance = np.zeros_like(self.map_array) - 1
         target = [list(z) for z in  zip(np.where(self.map_array == 3)[0].tolist(), np.where(self.map_array == 3)[1].tolist())][task_idx]
+        distance[target[0], target[1]] = 0
         move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
 
         visisted = {}

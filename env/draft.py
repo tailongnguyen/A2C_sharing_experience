@@ -1,4 +1,3 @@
-from sxsy import SXSY 
 import numpy as np 
 import matplotlib.pyplot as plt 
 
@@ -44,6 +43,8 @@ map_array = np.array([
 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
 , dtype = int)
 
+move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+
 # plt.xlim([-1, map_array.shape[1]])
 # plt.ylim([-1, map_array.shape[0]])
 
@@ -59,35 +60,79 @@ map_array = np.array([
 
 # plt.show()
 
-distance = np.zeros_like(map_array)
-target = [list(z) for z in  zip(np.where(map_array == 3)[0].tolist(), np.where(map_array == 3)[1].tolist())][1]
-move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+def min_dist(map_array):
 
-visisted = {}
-for i in range(distance.shape[0]):
-	for j in range(distance.shape[1]):
-		visisted[i, j] = False
+	distance = np.zeros_like(map_array) - 1
+	target = [list(z) for z in  zip(np.where(map_array == 3)[0].tolist(), np.where(map_array == 3)[1].tolist())][1]
+	distance[target[0], target[1]] = 0
+	visisted = {}
+	for i in range(distance.shape[0]):
+		for j in range(distance.shape[1]):
+			visisted[i, j] = False
 
-queue = []
-queue.append(target)
+	queue = []
+	queue.append(target)
 
-while len(queue) > 0:
-	pos = queue[0]
-	queue = queue[1:]
+	while len(queue) > 0:
+		pos = queue[0]
+		queue = queue[1:]
 
-	visisted[pos[0], pos[1]] = True
+		visisted[pos[0], pos[1]] = True
 
-	for m in move:
+		for m in move:
 
-		neighbor = [pos[0] + m[0], pos[1] + m[1]]
+			neighbor = [pos[0] + m[0], pos[1] + m[1]]
 
-		if map_array[neighbor[0], neighbor[1]] == 0:
-			continue 
+			if map_array[neighbor[0], neighbor[1]] == 0:
+				continue 
 
-		if not visisted[neighbor[0], neighbor[1]]:
-			distance[neighbor[0], neighbor[1]] = distance[pos[0], pos[1]] + 1			
-			queue.append(neighbor)
-			visisted[neighbor[0], neighbor[1]] = True
+			if not visisted[neighbor[0], neighbor[1]]:
+				distance[neighbor[0], neighbor[1]] = distance[pos[0], pos[1]] + 1			
+				queue.append(neighbor)
+				visisted[neighbor[0], neighbor[1]] = True
 
 
-print(distance)
+	print(distance)
+	return distance
+
+# def adv_map():
+distance = min_dist(map_array)
+adv = {}
+
+for i in range(distance.shape[1]):
+	for j in range(distance.shape[0]):
+		if distance[j][i] == -1:
+			continue
+
+		for m_i, m in enumerate(move):
+			x, y = m
+			if distance[j + y][i + x] == -1:
+				adv[i, j, m_i] = -2
+				continue
+
+			if distance[j + y][i + x] < distance[j][i]:
+				adv[i, j, m_i] = 1
+			elif distance[j + y][i + x] > distance[j][i]:
+				adv[i, j, m_i] = -1
+			else:
+				adv[i, j, m_i] = 0
+
+# def plot_point(ax, point, angle, length):
+# 	x, y = point
+
+# 	endy = length * math.sin(math.radians(angle)) + y
+# 	endx = length * math.cos(math.radians(angle)) + x
+
+# 	ax.plot([x, endx], [y, endy], color = 'blue')
+
+# def plot_star(ax, orig, lengths, max_length=0.5, angles=[270, 225, 180, 135, 90, 45, 0, 315]):
+# 		max_len = max(lengths)
+# 		for i, angle in enumerate(angles):
+# 			plot_point(ax, orig, angle, lengths[i]*1.0 / max_len * max_length)
+
+# ax = plt.subplot(111)
+
+# for i in range(distance.shape[1]):
+# 	for j in range(distance.shape[0]):
+# 		plot_star(ax, (x, y), policy[x,y,index, 1])
+# 		plt.plot([x,], [y,], marker='o', markersize=1, color="green")

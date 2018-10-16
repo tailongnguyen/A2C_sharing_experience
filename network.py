@@ -103,7 +103,7 @@ class A2C():
         # Add this placeholder for having this variable in tensorboard
         self.mean_reward = tf.placeholder(tf.float32)
         self.mean_redundant = tf.placeholder(tf.float32)
-        self.tloss_summary = tf.placeholder(tf.float32)
+        self.aloss_summary = tf.placeholder(tf.float32)
         self.ploss_summary = tf.placeholder(tf.float32)
         self.vloss_summary = tf.placeholder(tf.float32)
         self.entropy_summary = tf.placeholder(tf.float32)
