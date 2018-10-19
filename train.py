@@ -21,11 +21,6 @@ else:
 
 def training(args):
 	tf.reset_default_graph()
-	
-	if args.share_exp:
-		network_name_scope = 'Share_samples'
-	else:
-		network_name_scope = 'None'
 
 	env = Terrain(args.map_index, args.use_laser)
 	policies = []
@@ -76,7 +71,7 @@ def training(args):
 		if arg in exclude:
 			continue
 
-		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'multiprocess']
+		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'multiprocess', 'new_iw']
 		if arg in boolean:
 			if getattr(args, arg) != 1:
 				continue
@@ -84,7 +79,10 @@ def training(args):
 				suffix.append(arg)
 				continue
 
-		if arg in ['share_weight', 'share_decay'] and getattr(args, 'share_exp') == 0:
+		if arg in ['share_decay', 'new_iw'] and getattr(args, 'share_exp') == 0:
+			continue
+
+		if arg in ['ec', 'vc'] and getattr(args, 'joint_loss') == 0:
 			continue
 
 		suffix.append(arg + "_" + str(getattr(args, arg)))
@@ -131,7 +129,7 @@ def training(args):
 										save_model 			= args.save_model,
 										save_name 			= test_name + "_" + suffix,
 										share_exp 			= args.share_exp,
-										share_weight		= args.share_weight,
+										new_iw				= args.new_iw,
 										use_laser			= args.use_laser,
 										use_gae				= args.use_gae,
 										noise_argmax		= args.noise_argmax,
@@ -143,11 +141,6 @@ def training(args):
 
 
 def train(args):
-	
-	if args.share_exp:
-		network_name_scope = 'Share_samples'
-	else:
-		network_name_scope = 'None'
 
 	log_folder = 'logs/' + TIMER
 
@@ -165,9 +158,12 @@ def train(args):
 				suffix.append(arg)
 				continue
 
-		if arg in ['share_weight', 'share_decay'] and getattr(args, 'share_exp') == 0:
+		if arg in ['share_decay', 'new_iw'] and getattr(args, 'share_exp') == 0:
 			continue
 
+		if arg in ['ec', 'vc'] and getattr(args, 'joint_loss') == 0:
+			continue
+			
 		suffix.append(arg + "_" + str(getattr(args, arg)))
 
 	suffix = '-'.join(suffix)
@@ -208,7 +204,7 @@ if __name__ == '__main__':
 						help='Index of map'),
 	parser.add_argument('--num_task', nargs='?', type=int, default = 1, 
     					help='Number of tasks to train on')
-	parser.add_argument('--immortal', nargs='?', type=int, default = 1, 
+	parser.add_argument('--immortal', nargs='?', type=int, default = 0, 
     					help='Whether the agent dies when hitting the wall')
 	parser.add_argument('--share_exp', nargs='?', type=int, default = 0, 
     					help='Whether to turn on sharing samples on training')
@@ -222,12 +218,12 @@ if __name__ == '__main__':
 						help='Learning rate')
 	parser.add_argument('--use_laser', nargs='?', type=int, default = 0,
 						help='Whether to use laser as input observation instead of one-hot vector')
-	parser.add_argument('--use_gae', nargs='?', type=int, default = 0,
+	parser.add_argument('--use_gae', nargs='?', type=int, default = 1,
 						help='Whether to use generalized advantage estimate')
 	parser.add_argument('--num_epochs', nargs='?', type=int, default = 2000,
 						help='Number of epochs to train')
-	parser.add_argument('--share_weight', nargs='?', type=float, default = 0.5,
-						help='weight on importance sampling')
+	parser.add_argument('--new_iw', nargs='?', type=int, default = 0,
+						help='Whether to use new importance weights')
 	parser.add_argument('--share_decay', nargs='?', type=float, default = 1.0,
 						help='threshold when sharing samples')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
@@ -244,9 +240,9 @@ if __name__ == '__main__':
 						help='Plot interval')
 	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')
-	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 0,
+	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 1,
 						help='Whether touse noise argmax in action sampling')
-	parser.add_argument('--joint_loss', nargs='?', type=int, default = 0,
+	parser.add_argument('--joint_loss', nargs='?', type=int, default = 1,
 						help='Whether touse noise argmax in action sampling')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
 						help='Saving interval')

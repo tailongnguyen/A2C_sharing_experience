@@ -32,13 +32,14 @@ class MultitaskPolicy(object):
 			save_model,
 			save_name,
 			share_exp,
-			share_weight,
+			new_iw,
 			use_laser,
 			use_gae,
 			noise_argmax,
 			timer
 			):
 
+		self.new_iw = new_iw
 		self.map_index = map_index
 		self.PGNetwork = policies
 
@@ -58,7 +59,6 @@ class MultitaskPolicy(object):
 		self.save_model = save_model
 
 		self.share_exp = share_exp
-		self.share_weight = share_weight
 		self.noise_argmax = noise_argmax
 
 		self.sharing_decay = 0.9
@@ -319,19 +319,34 @@ class MultitaskPolicy(object):
 					if self.env.MAP[s[1]][s[0]] == 2:
 
 						act = actions[task_idx][idx]	
-						# importance_weight = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
-						
 
-						# and share with other tasks
-						for other_task in range(self.num_task):
-							if other_task == task_idx:
-								continue
+						if not self.new_iw:
 
-							share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
-							share_actions[other_task].append(self.env.cv_action_onehot[act])
-							share_advantages[other_task].append(advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / current_policy[s[0], s[1], task_idx, 1][act] )
+							# and share with other tasks
+							for other_task in range(self.num_task):
+								if other_task == task_idx:
+									continue
 
-						sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / current_policy[s[0], s[1], other_task, 1][act]))
+								share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+								share_actions[other_task].append(self.env.cv_action_onehot[act])
+								share_advantages[other_task].append(advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / current_policy[s[0], s[1], task_idx, 1][act] )
+
+							sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / current_policy[s[0], s[1], other_task, 1][act]))
+
+						else:
+							mean_policy = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
+
+							# and share with other tasks
+							for other_task in range(self.num_task):
+								if other_task == task_idx:
+									continue
+
+								share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+								share_actions[other_task].append(self.env.cv_action_onehot[act])
+								share_advantages[other_task].append(advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / mean_policy)
+
+							sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / mean_policy))
+
 
 			for task_idx in range(self.num_task):
 				for idx, iw in sharing[task_idx]:
@@ -389,7 +404,7 @@ class MultitaskPolicy(object):
 					if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
 						correct_adv += 1
 
-				sum_dict[self.PGNetwork[task_idx].aloss_summary] =  correct_adv / len(rewards[task_idx])
+				sum_dict[self.PGNetwork[task_idx].aloss_summary] =  correct_adv / len(list(np.concatenate(rewards[task_idx])))
 				sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
 				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
 				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
@@ -407,7 +422,7 @@ class MultitaskPolicy(object):
 			#---------------------------------------------------------------------------------------------------------------------#	
 			summary = sess.run(self.write_op, feed_dict = sum_dict)
 
-			self.writer.add_summary(summary, total_samples[0])
+			self.writer.add_summary(summary, np.mean(list(total_samples.values())))
 			self.writer.flush()
 			#---------------------------------------------------------------------------------------------------------------------#	
 

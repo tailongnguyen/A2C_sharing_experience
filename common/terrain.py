@@ -2,13 +2,15 @@ import matplotlib.pyplot as plt
 import random
 import numpy as np
 import time
+import os
+import pickle
 import multiprocessing
 from random import randint
 
 try:
     from .map import ENV_MAP
 except ModuleNotFoundError:
-    from map import SXSY
+    from map import ENV_MAP
     
 def make_env(**kwargs):
     def _thunk():
@@ -17,15 +19,17 @@ def make_env(**kwargs):
     return _thunk
 
 class Terrain:
-    def __init__(self, map_index, use_laser = False, immortal = False, task = 0):
+    def __init__(self, map_index, use_laser = False, immortal = False, task = 0, save_folder = None, plotgame = False):
         self.MAP = ENV_MAP[map_index]['map']
         self.map_array = np.array(self.MAP, dtype = int)
         self.cv_action=[[0,-1],[-1,-1],[-1,0],[-1,1],[0,1],[1,1],[1,0],[1,-1]]
 
-        self.trajectory = []
+        self.trajectory = {}
+        self.save_folder = save_folder
 
-        # plt.ion()
-        # self.fig = plt.figure()
+        if plotgame:
+            plt.ion()
+            self.fig = plt.figure()
 
         self.position = None
         self.task = task
@@ -34,10 +38,9 @@ class Terrain:
         self.state_space = [list(z) for z in  zip(np.where(self.map_array != 0)[1].tolist(), np.where(self.map_array != 0)[0].tolist())]
 
         self.state_to_index = np.zeros_like(self.MAP) - 1
-        
         for i, s in enumerate(self.state_space):
             self.state_to_index[s[1]][s[0]] = i
-        
+
         assert np.sum(self.state_to_index != -1) == len(self.state_space)
 
         self.action_size = 8
@@ -64,13 +67,41 @@ class Terrain:
         self.observation_space = self.cv_state_onehot.shape[1]
         self.action_space = self.cv_action_onehot.shape[1]
 
+        self.episode = 0
         self.min_dist = []
+        self.advs = []
         for i in range(self.num_task):
             self.min_dist.append(self.cal_min_dist(i))
+            self.advs.append(self.adv_map(self.min_dist[-1]))
+
+    def adv_map(self, distance):
+        move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+        adv = {}
+
+        for i in range(distance.shape[1]):
+            for j in range(distance.shape[0]):
+                if distance[j][i] == -1:
+                    continue
+
+                for m_i, m in enumerate(move):
+                    x, y = m
+                    if distance[j + y][i + x] == -1:
+                        adv[i, j, m_i] = -2
+                        continue
+                        
+                    if distance[j + y][i + x] < distance[j][i]:
+                        adv[i, j, m_i] = 1
+                    elif distance[j + y][i + x] > distance[j][i]:
+                        adv[i, j, m_i] = -1
+                    else:
+                        adv[i, j, m_i] = 0
+
+        return adv
 
     def cal_min_dist(self, task_idx):
-        distance = np.zeros_like(self.map_array)
+        distance = np.zeros_like(self.map_array) - 1
         target = [list(z) for z in  zip(np.where(self.map_array == 3)[0].tolist(), np.where(self.map_array == 3)[1].tolist())][task_idx]
+        distance[target[0], target[1]] = 0
         move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
 
         visisted = {}
@@ -110,7 +141,16 @@ class Terrain:
             reached = self.reach_target()
 
         cur_x, cur_y = self.position
-        self.trajectory = [self.position]
+
+        if self.episode > 0 and self.episode == 2000:
+            if not os.path.isdir(self.save_folder):
+                os.mkdir(self.save_folder)
+
+            with open(os.path.join(self.save_folder, '{}_traj_{}.pkl'.format(multiprocessing.current_process().name, self.episode)), 'wb') as f:
+                pickle.dump(self.trajectory, f, pickle.HIGHEST_PROTOCOL)
+
+        self.episode += 1
+        self.trajectory[self.episode] = [self.position]
         return (cur_x, cur_y)
 
     def reset_task(self):
@@ -138,7 +178,7 @@ class Terrain:
                 reward = self.reward_goal
                 done = 1
 
-        self.trajectory.append(self.position)
+        self.trajectory[self.episode].append(self.position)
 
         return ob, reward, done
 
@@ -168,32 +208,37 @@ class Terrain:
     def clear_plot(self):
         plt.clf()
         
-    def plotgame(self, action):
+    def plotgame(self, trajectory):
 
-        plt.xlim([-1, self.map_array.shape[1]])
-        plt.ylim([-1, self.map_array.shape[0]])
 
-        for y in range(self.map_array.shape[0]):
-            for x in range(self.map_array.shape[1]):
-                if self.MAP[y][x] == 0:
-                    plt.scatter(x, y, marker='x', color="red")
+        for ep_idx, episode in trajectory.items():
+            if ep_idx < 1800:
+                continue
+            plt.title("Epoch {}".format(ep_idx))
+            plt.xlim([-1, self.map_array.shape[1]])
+            plt.ylim([-1, self.map_array.shape[0]])
+            for y in range(self.map_array.shape[0]):
+                for x in range(self.map_array.shape[1]):
+                    if self.MAP[y][x] == 0:
+                        plt.scatter(x, y, marker='x', color="red")
 
-        for (x, y) in self.state_space:
-            plt.scatter(x, y, marker='o', color="green", s = 5)
+            for (x, y) in self.state_space:
+                plt.scatter(x, y, marker='o', color="green", s = 5)
 
-        for x_pos, y_pos in self.reward_locs:
-            plt.scatter(x_pos, y_pos, marker='*', color="yellow")
+            for x_pos, y_pos in self.reward_locs:
+                plt.scatter(x_pos, y_pos, marker='*', color="yellow")
 
-        for idx, (x, y) in enumerate(self.trajectory):
-            plt.scatter(x, y, marker='^', color="blue", s = 30)
+            for idx, (x, y) in enumerate(trajectory[ep_idx]):
+                plt.scatter(x, y, marker='^', color="blue", s = 30)
+                plt.plot([pos[0] for pos in trajectory[ep_idx][:idx + 1]], [pos[1] for pos in trajectory[ep_idx][:idx + 1]])
+            
+                self.fig.canvas.draw()
+                self.fig.canvas.flush_events()
 
-        plt.plot([pos[0] for pos in self.trajectory], [pos[1] for pos in self.trajectory])
-        
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+            self.clear_plot()
         
             
 if __name__ == '__main__':
-    ter = Terrain(4)
-    ter.resetgame(1, 1, 1)
-    ter.plotgame()
+    ter = Terrain(map_index = 4, plotgame = True)
+    trajectory = pickle.load(open("../plot/2018-10-19_00-01-47_test_ppo/Process-2_traj_2000.pkl", "rb"))
+    ter.plotgame(trajectory)

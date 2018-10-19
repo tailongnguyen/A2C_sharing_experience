@@ -133,12 +133,11 @@ class A2C():
                                                   epsilon=self.epsilon)
             self.optimize = optimizer.apply_gradients(self.grads)
 
-        else:
-            with tf.variable_scope(name + "_actor"):
-                self.train_opt_policy = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.actor.policy_loss)
+        with tf.variable_scope(name + "_actor"):
+            self.train_opt_policy = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.actor.policy_loss)
 
-            with tf.variable_scope(name + "_critic"):
-                self.train_opt_value = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.critic.value_loss)
+        with tf.variable_scope(name + "_critic"):
+            self.train_opt_value = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.critic.value_loss)
 
     def set_lr_decay(self, lr_rate, nvalues):
         self.learning_rate_decayed = LearningRateDecay(v = lr_rate,

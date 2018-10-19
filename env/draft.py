@@ -117,6 +117,19 @@ for i in range(distance.shape[1]):
 			else:
 				adv[i, j, m_i] = 0
 
+
+def foo(x, r):
+	plt.plot(range(r), [x ** ep for ep in range(r)])
+	share = []
+	for i in range(r):
+		c = np.random.choice([0.5, 0], p = [x ** i, 1 - x **i])
+		if c == 0.5:
+			share.append(i)
+	plt.scatter(share, [x ** ep for ep in share], color = 'C1') 
+	plt.show()
+
+foo(0.989, 2000)
+
 # def plot_point(ax, point, angle, length):
 # 	x, y = point
 

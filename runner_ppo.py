@@ -7,7 +7,7 @@ import copy
 import os
 import sys 
 
-from network import *
+from ppo_network import A2C_PPO
 from utils import noise_and_argmax
 from common.multiprocessing_env import SubprocVecEnv
 from common.terrain import Terrain, make_env
@@ -31,7 +31,8 @@ class Runner(object):
 		self.PGNetwork = []
 	
 		for i in range(args.num_task):
-			policy_i = A2C(
+
+			policy_i = A2C_PPO(
 							name 					= 'A2C_' + str(i),
 							state_size 				= self.env.cv_state_onehot.shape[1], 
 							action_size				= self.env.action_size,
@@ -40,7 +41,7 @@ class Runner(object):
 							max_gradient_norm		= args.max_gradient_norm,
 							alpha 					= args.alpha,
 							epsilon					= args.epsilon,
-							joint_loss				= args.joint_loss,
+							clip_param				= args.clip_param,
 							learning_rate			= args.lr,
 							decay 					= args.decay,
 							reuse					= bool(args.share_latent)
@@ -52,10 +53,6 @@ class Runner(object):
 		self.writer = writer
 		tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in self.PGNetwork], 0))
 		tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in self.PGNetwork], 0))
-		# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in self.PGNetwork], 0))
 
 		self.write_op = tf.summary.merge_all()
 
@@ -74,6 +71,9 @@ class Runner(object):
 		self.lamb = lamb
 		self.save_name = save_name
 
+		self.ppo_epochs = args.ppo_epochs
+		self.mini_batch_size = args.minibatch
+
 		self.envs_task = []
 		self.current_states = [[] for _ in range(self.num_task)]
 
@@ -83,6 +83,7 @@ class Runner(object):
 							immortal = args.immortal, 
 							task = i, 
 							save_folder = os.path.join('plot', timer) ) for _ in range(args.num_episode)]
+
 			self.envs_task.append(SubprocVecEnv(envs))
 			self.current_states[i] = self.envs_task[-1].reset()
 
@@ -121,7 +122,7 @@ class Runner(object):
 			for (x, y) in self.env.state_space:
 				state_index = self.env.state_to_index[y][x]
 				v = sess.run(
-							self.PGNetwork[task].critic.value, 
+							self.PGNetwork[task].critic.values, 
 							feed_dict={
 								self.PGNetwork[task].critic.inputs: [self.env.cv_state_onehot[state_index]],
 							})
@@ -177,15 +178,9 @@ class Runner(object):
 
 		self.current_states[task] = next_states
 
-		# print("States\n", mb_states)
-		# print("Actions\n", mb_actions)
-		# print("Rewards\n", mb_rewards)
-		# print("Dones\n", mb_dones)
-		# print("values\n", mb_values)
-
 		return mb_states, mb_actions, mb_rewards, mb_values, mb_dones, mb_last_values
 
-	def _make_batch(self, sess, epoch):
+	def _make_batch(self, sess, epoch, current_policy, current_values):
 
 		def _discount_with_dones(rewards, dones, gamma):
 			discounted = []
@@ -226,10 +221,7 @@ class Runner(object):
 				# Advantage = delta + gamma *  (lambda) * nextnonterminal  * lastgaelam
 				advantages[t] = lastgaelam = delta + gamma * lamb * nextnonterminal * lastgaelam
 
-			return list(advantages)
-
-		current_policy = self._prepare_current_policy(sess, epoch)
-		current_values = self._prepare_current_values(sess, epoch)
+			return list(advantages)		
 
 		raw_task_states = [[] for i in range(self.num_task)]
 		raw_task_actions = [[] for i in range(self.num_task)]
@@ -344,6 +336,40 @@ class Runner(object):
 					task_advantages[task_idx][idx] = task_advantages[task_idx][idx] * iw
 
 		return task_states, task_actions, task_returns, task_advantages, rewards_summary, share_observations, share_actions, share_advantages, true_advantages
+		
+	def ppo_iter(self, states, actions, returns, advantages):
+		batch_size = len(states)
+
+		states = np.array(states, dtype = np.float32)
+		actions = np.array(actions, dtype = np.float32)
+		returns = np.array(returns, dtype = np.float32)
+		advantages = np.array(advantages, dtype = np.float32)
+
+		inds = np.arange(batch_size)
+		np.random.shuffle(inds)
+
+		for start in range(0, batch_size, self.mini_batch_size):
+			rand_ids = inds[start: start + self.mini_batch_size]
+			yield list(states[rand_ids]), list(actions[rand_ids]), list(returns[rand_ids]), list(advantages[rand_ids])
+        
+        
+
+	def ppo_update(self, sess, old_policy, mb_states, mb_actions, mb_returns, mb_advantages, task_idx):
+		for _ in range(self.ppo_epochs):
+			for states, actions, returns, advantages in self.ppo_iter(mb_states, mb_actions, mb_returns, mb_advantages):
+				old_probs = []
+				for onehot_state, onehot_action in zip(states, actions):
+					state_index = np.where(onehot_state == 1)[0][0]
+					action = np.where(onehot_action == 1)[0][0]
+
+					(x, y) = self.env.state_space[state_index]
+					assert self.env.state_to_index[y][x] == state_index
+
+					old_probs.append(old_policy[x, y, task_idx, 1][action])
+
+				old_neg_log_probs = - np.log(old_probs)
+				
+				self.PGNetwork[task_idx].learn_ppo(sess, states, actions, returns, advantages, old_neg_log_probs)
 
 	def train(self):
 		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
@@ -357,9 +383,13 @@ class Runner(object):
 		for epoch in range(self.num_epochs):
 			print('epoch {}/{}'.format(epoch+1, self.num_epochs), end = '\r', flush = True)
 			
+			current_policy = self._prepare_current_policy(sess, epoch)
+			current_values = self._prepare_current_values(sess, epoch)
+
 			# ROLLOUT SAMPLE
 			#---------------------------------------------------------------------------------------------------------------------#	
-			mb_states, mb_actions, mb_returns, mb_advantages, rewards, mbshare_states, mbshare_actions, mbshare_advantages, true_advantages = self._make_batch(sess, epoch)
+			mb_states, mb_actions, mb_returns, mb_advantages, rewards, \
+			mbshare_states, mbshare_actions, mbshare_advantages, true_advantages = self._make_batch(sess, epoch, current_policy, current_values)
 			#---------------------------------------------------------------------------------------------------------------------#	
 
 			# UPDATE NETWORK
@@ -368,40 +398,17 @@ class Runner(object):
 			for task_idx in range(self.num_task):
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
 
-				if not self.share_exp or epoch >= 420:
-					policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
-																					mb_states[task_idx],
-																					mb_actions[task_idx],
-																					mb_returns[task_idx],
-																					mb_advantages[task_idx]
-																				)
-				else:
-					value_loss = self.PGNetwork[task_idx].learn_critic(sess,
-																			mb_states[task_idx],
-																			mb_returns[task_idx])
-					
-					policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
-																			mb_states[task_idx] + mbshare_states[task_idx],
-																			mb_actions[task_idx] + mbshare_actions[task_idx],
-																			mb_advantages[task_idx] + mbshare_advantages[task_idx])
-					# policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
-					# 														mbshare_states[task_idx],
-					# 														mbshare_actions[task_idx],
-					# 														mbshare_advantages[task_idx])
+				assert self.share_exp == 0
 
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
-				# sum_dict[self.PGNetwork[task_idx].tloss_summary] = total_loss
-				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
-				# sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
-				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
-				# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
-
+				self.ppo_update(sess, current_policy,  mb_states[task_idx], mb_actions[task_idx], mb_returns[task_idx], mb_advantages[task_idx], task_idx)
+				
 				correct_adv = 0
 				for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
 					if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
 						correct_adv += 1
 
-				sum_dict[self.PGNetwork[task_idx].aloss_summary] = correct_adv / len(mb_advantages[task_idx])
+				sum_dict[self.PGNetwork[task_idx].aloss_summary] =  correct_adv / len(mb_advantages[task_idx])
+				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
 
 				if task_idx not in total_samples:
 					total_samples[task_idx] = 0
