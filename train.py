@@ -246,17 +246,12 @@ if __name__ == '__main__':
 						help='Whether touse noise argmax in action sampling')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
 						help='Saving interval')
-	parser.add_argument('--multiprocess', nargs='?', type=int, default = 0,
-						help='Saving interval')
 
 	args = parser.parse_args()
 
 	start = time.time()
 	for i in range(args.num_tests):
-		if args.multiprocess:
-			train(args)
-		else:
-			training(args)
+		training(args)
 
 	print("Done in {} minutes".format((time.time() - start)/60))
 
