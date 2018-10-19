@@ -144,7 +144,7 @@ class Terrain:
 
         if self.episode > 0 and self.episode == 2000:
             if not os.path.isdir(self.save_folder):
-                os.mkdir(self.save_folder)
+                os.makedirs(self.save_folder)
 
             with open(os.path.join(self.save_folder, '{}_traj_{}.pkl'.format(multiprocessing.current_process().name, self.episode)), 'wb') as f:
                 pickle.dump(self.trajectory, f, pickle.HIGHEST_PROTOCOL)

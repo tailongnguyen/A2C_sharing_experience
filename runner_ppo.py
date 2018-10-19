@@ -56,20 +56,23 @@ class Runner(object):
 
 		self.write_op = tf.summary.merge_all()
 
-		self.use_gae = args.use_gae
+		self.num_episode = args.num_episode
 		self.num_task = args.num_task
 		self.num_steps = args.num_iters
 		self.num_epochs = args.num_epochs
-		self.plot_model = args.plot_model
-		self.save_model = args.save_model
+
 		self.share_exp = args.share_exp
 		self.share_decay = args.share_decay
+		self.share_cut = args.share_cut
+
+		self.lamb = lamb
+		self.gamma = gamma
+		self.use_gae = args.use_gae
 		self.noise_argmax = args.noise_argmax
 
-		self.num_episode = args.num_episode
-		self.gamma = gamma
-		self.lamb = lamb
 		self.save_name = save_name
+		self.plot_model = args.plot_model
+		self.save_model = args.save_model
 
 		self.ppo_epochs = args.ppo_epochs
 		self.mini_batch_size = args.minibatch
@@ -82,7 +85,7 @@ class Runner(object):
 							use_laser = args.use_laser, 
 							immortal = args.immortal, 
 							task = i, 
-							save_folder = os.path.join('plot', timer) ) for _ in range(args.num_episode)]
+							save_folder = os.path.join('plot', timer, self.save_name)) for _ in range(args.num_episode)]
 
 			self.envs_task.append(SubprocVecEnv(envs))
 			self.current_states[i] = self.envs_task[-1].reset()
@@ -306,7 +309,11 @@ class Runner(object):
 			assert self.num_task > 1
 				
 			sharing = {}
-			share_choice = np.random.choice([1, 0], p = [self.share_decay ** epoch, 1 - self.share_decay ** epoch])
+
+			if self.share_cut:
+				share_choice = int(epoch < 420)
+			else:
+				share_choice = np.random.choice([1, 0], p = [self.share_decay ** epoch, 1 - self.share_decay ** epoch])
 			
 			for task_idx in range(self.num_task):
 				sharing[task_idx] = []
@@ -317,8 +324,7 @@ class Runner(object):
 						act = raw_task_actions[task_idx][idx]	
 						importance_weight = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
 						
-						# if share_choice == 1:
-						if epoch < 420:
+						if share_choice == 1:
 							# and share with other tasks
 							for other_task in range(self.num_task):
 								if other_task == task_idx:
@@ -354,11 +360,20 @@ class Runner(object):
         
         
 
-	def ppo_update(self, sess, old_policy, mb_states, mb_actions, mb_returns, mb_advantages, task_idx):
+	def ppo_update(self, sess, old_policy, mb_states, mb_actions, mb_returns, mb_advantages, mbshare_states, mbshare_actions, mbshare_advantages, task_idx):
+		share_size = len(mbshare_states)
+		mbshare_states = np.array(mbshare_states, dtype = np.float32)
+		mbshare_actions = np.array(mbshare_actions, dtype = np.float32)
+		mbshare_advantages = np.array(mbshare_advantages, dtype = np.float32)
+
 		for _ in range(self.ppo_epochs):
 			for states, actions, returns, advantages in self.ppo_iter(mb_states, mb_actions, mb_returns, mb_advantages):
+				permute = np.random.choice(range(share_size), min(self.mini_batch_size, share_size), replace = False)
+
+				actor_states = states + list(mbshare_states[permute])
+				actor_actions = actions + list(mbshare_actions[permute])
 				old_probs = []
-				for onehot_state, onehot_action in zip(states, actions):
+				for onehot_state, onehot_action in zip(actor_states, actor_actions):
 					state_index = np.where(onehot_state == 1)[0][0]
 					action = np.where(onehot_action == 1)[0][0]
 
@@ -369,7 +384,15 @@ class Runner(object):
 
 				old_neg_log_probs = - np.log(old_probs)
 				
-				self.PGNetwork[task_idx].learn_ppo(sess, states, actions, returns, advantages, old_neg_log_probs)
+				self.PGNetwork[task_idx].learn_ppo(sess, 
+												actor_states = actor_states, 
+												critic_states = states,
+												actions = actor_actions, 
+												returns = returns, 
+												advantages = advantages + list(mbshare_advantages[permute]), 
+												old_neg_log_probs = old_neg_log_probs)
+
+
 
 	def train(self):
 		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
@@ -398,9 +421,16 @@ class Runner(object):
 			for task_idx in range(self.num_task):
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
 
-				assert self.share_exp == 0
-
-				self.ppo_update(sess, current_policy,  mb_states[task_idx], mb_actions[task_idx], mb_returns[task_idx], mb_advantages[task_idx], task_idx)
+				self.ppo_update(sess, 
+							current_policy,  
+							mb_states[task_idx], 
+							mb_actions[task_idx], 
+							mb_returns[task_idx], 
+							mb_advantages[task_idx],
+							mbshare_states[task_idx],
+							mbshare_actions[task_idx],
+							mbshare_advantages[task_idx], 
+							task_idx)
 				
 				correct_adv = 0
 				for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):

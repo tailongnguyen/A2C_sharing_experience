@@ -52,27 +52,28 @@ class Runner(object):
 		self.writer = writer
 		tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in self.PGNetwork], 0))
 		tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in self.PGNetwork], 0))
-		# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
-		# tf.summary.scalar(test_name + "/nsteps", tf.reduce_mean([policy.steps_per_ep for policy in self.PGNetwork], 0))
 
 		self.write_op = tf.summary.merge_all()
 
-		self.use_gae = args.use_gae
 		self.num_task = args.num_task
 		self.num_steps = args.num_iters
 		self.num_epochs = args.num_epochs
-		self.plot_model = args.plot_model
-		self.save_model = args.save_model
+		self.num_episode = args.num_episode
+
 		self.share_exp = args.share_exp
 		self.share_decay = args.share_decay
-		self.noise_argmax = args.noise_argmax
+		self.share_cut = args.share_cut
+		self.no_iw = args.no_iw
 
-		self.num_episode = args.num_episode
 		self.gamma = gamma
 		self.lamb = lamb
+		self.noise_argmax = args.noise_argmax
+		self.use_gae = args.use_gae
+
 		self.save_name = save_name
+		self.plot_model = args.plot_model
+		self.save_model = args.save_model
+
 
 		self.envs_task = []
 		self.current_states = [[] for _ in range(self.num_task)]
@@ -312,36 +313,58 @@ class Runner(object):
 
 		if self.share_exp:
 			assert self.num_task > 1
+
+			if self.share_cut:
+				share_choice = int(epoch < 420)
+			else:
+				share_choice = np.random.choice([1, 0], p = [self.share_decay ** epoch, 1 - self.share_decay ** epoch])
+
+			if self.no_iw:
+				for task_idx in range(self.num_task):
+					for idx, s in enumerate(raw_task_states[task_idx]):
+							
+						if self.env.MAP[s[1]][s[0]] == 2:
+
+							act = raw_task_actions[task_idx][idx]	
+							
+							if share_choice:
+								# and share with other tasks
+								for other_task in range(self.num_task):
+									if other_task == task_idx:
+										continue
+
+									share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+									share_actions[other_task].append(self.env.cv_action_onehot[act])
+									share_advantages[other_task].append(task_advantages[task_idx][idx])
+
+			else:
+				sharing = {}
 				
-			sharing = {}
-			share_choice = np.random.choice([1, 0], p = [self.share_decay ** epoch, 1 - self.share_decay ** epoch])
-			
-			for task_idx in range(self.num_task):
-				sharing[task_idx] = []
-				for idx, s in enumerate(raw_task_states[task_idx]):
-						
-					if self.env.MAP[s[1]][s[0]] == 2:
+				for task_idx in range(self.num_task):
+					sharing[task_idx] = []
+					for idx, s in enumerate(raw_task_states[task_idx]):
+							
+						if self.env.MAP[s[1]][s[0]] == 2:
 
-						act = raw_task_actions[task_idx][idx]	
-						importance_weight = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
-						
-						# if share_choice == 1:
-						if epoch < 420:
-							# and share with other tasks
-							for other_task in range(self.num_task):
-								if other_task == task_idx:
-									continue
+							act = raw_task_actions[task_idx][idx]	
+							importance_weight = np.mean([current_policy[s[0], s[1], tidx, 1][act] for tidx in range(self.num_task)])
+							
+							if share_choice:
+								# and share with other tasks
+								for other_task in range(self.num_task):
+									if other_task == task_idx:
+										continue
 
-								share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
-								share_actions[other_task].append(self.env.cv_action_onehot[act])
-								share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
+									share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
+									share_actions[other_task].append(self.env.cv_action_onehot[act])
+									share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
 
-						sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / importance_weight))
+							sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / importance_weight))
 
-			for task_idx in range(self.num_task):
-				for idx, iw in sharing[task_idx]:
-					# we must multiply the advantages of sharing positions with the importance weight and we do it exactly ONE time
-					task_advantages[task_idx][idx] = task_advantages[task_idx][idx] * iw
+				for task_idx in range(self.num_task):
+					for idx, iw in sharing[task_idx]:
+						# we must multiply the advantages of sharing positions with the importance weight and we do it exactly ONE time
+						task_advantages[task_idx][idx] = task_advantages[task_idx][idx] * iw
 
 		return task_states, task_actions, task_returns, task_advantages, rewards_summary, share_observations, share_actions, share_advantages, true_advantages
 
@@ -352,7 +375,7 @@ class Runner(object):
 		sess.run(tf.global_variables_initializer())
 
 		saver = tf.train.Saver()
-
+		update_type = 1
 		total_samples = {}
 		for epoch in range(self.num_epochs):
 			print('epoch {}/{}'.format(epoch+1, self.num_epochs), end = '\r', flush = True)
@@ -368,39 +391,20 @@ class Runner(object):
 			for task_idx in range(self.num_task):
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
 
-				if not self.share_exp or epoch >= 420:
-					policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
-																					mb_states[task_idx],
-																					mb_actions[task_idx],
-																					mb_returns[task_idx],
-																					mb_advantages[task_idx]
-																				)
-				else:
-					value_loss = self.PGNetwork[task_idx].learn_critic(sess,
-																			mb_states[task_idx],
-																			mb_returns[task_idx])
-					
-					policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
-																			mb_states[task_idx] + mbshare_states[task_idx],
-																			mb_actions[task_idx] + mbshare_actions[task_idx],
-																			mb_advantages[task_idx] + mbshare_advantages[task_idx])
-					# policy_loss = self.PGNetwork[task_idx].learn_actor(sess,
-					# 														mbshare_states[task_idx],
-					# 														mbshare_actions[task_idx],
-					# 														mbshare_advantages[task_idx])
-
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
-				# sum_dict[self.PGNetwork[task_idx].tloss_summary] = total_loss
-				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
-				# sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
-				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
-				# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
+				policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
+																				actor_states = mb_states[task_idx] + mbshare_states[task_idx],
+																				advantages = mb_advantages[task_idx] + mbshare_advantages[task_idx],
+																				actions = mb_actions[task_idx] + mbshare_actions[task_idx], 
+																				critic_states = mb_states[task_idx],
+																				returns = mb_returns[task_idx]
+																			)
 
 				correct_adv = 0
 				for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
 					if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
 						correct_adv += 1
 
+				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
 				sum_dict[self.PGNetwork[task_idx].aloss_summary] = correct_adv / len(mb_advantages[task_idx])
 
 				if task_idx not in total_samples:

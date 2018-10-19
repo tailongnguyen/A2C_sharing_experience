@@ -152,36 +152,7 @@ class A2C():
                 print(len(variables), variables)
             return variables
 
-    def learn_actor(self, sess, states, actions, advantages):
-        current_learning_rate = self.fixed_lr
-        feed_dict = {
-                        self.actor.inputs: states, 
-                        self.actor.actions: actions, 
-                        self.actor.advantages: advantages,
-                        self.learning_rate: current_learning_rate,
-                    }
-
-        policy_loss, _, = sess.run(
-                [self.actor.policy_loss, self.train_opt_policy], 
-                feed_dict = feed_dict)
-
-        return policy_loss
-
-    def learn_critic(self, sess, states, returns):
-        current_learning_rate = self.fixed_lr
-        feed_dict = {
-                        self.critic.inputs: states, 
-                        self.critic.returns: returns,
-                        self.learning_rate: current_learning_rate,
-                    }
-
-        value_loss, _, = sess.run(
-                [self.critic.value_loss, self.train_opt_value], 
-                feed_dict = feed_dict)
-
-        return value_loss
-
-    def learn(self, sess, states, actions, returns, advantages):
+    def learn(self, sess, actor_states, critic_states, actions, returns, advantages):
         if self.decay:
             for i in range(len(states)):
                 current_learning_rate = self.learning_rate_decayed.value()
@@ -189,8 +160,8 @@ class A2C():
             current_learning_rate = self.fixed_lr
 
         feed_dict = {
-                        self.actor.inputs: states, 
-                        self.critic.inputs: states, 
+                        self.actor.inputs: actor_states, 
+                        self.critic.inputs: critic_states, 
                         self.critic.returns: returns,
                         self.actor.actions: actions, 
                         self.actor.advantages: advantages,

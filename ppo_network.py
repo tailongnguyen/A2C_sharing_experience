@@ -156,19 +156,19 @@ class A2C_PPO():
                 print(len(variables), variables)
             return variables
 
-    def learn_ppo(self, sess, states, actions, returns, advantages, old_neg_log_probs):
+    def learn_ppo(self, sess, actor_states, critic_states, actions, returns, advantages, old_neg_log_probs):
         if self.decay:
-            for i in range(len(states)):
+            for i in range(len(actor_states)):
                 current_learning_rate = self.learning_rate_decayed.value()
         else:
             current_learning_rate = self.fixed_lr
 
         feed_dict = {
-                        self.actor.inputs: states, # --> actor.logits
+                        self.actor.inputs: actor_states, # --> actor.logits
                         self.actor.actions: actions, # + logits --> actor.neg_log_prob 
                         self.actor.advantages: advantages,
                         
-                        self.critic.inputs: states, # --> critic.values
+                        self.critic.inputs: critic_states, # --> critic.values
                         self.critic.returns: returns, # + critic.values --> value loss
                         self.old_neg_log_prob: old_neg_log_probs, # + actor.neg_log_prob --> policy loss
 

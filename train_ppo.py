@@ -83,6 +83,8 @@ if __name__ == '__main__':
     					help='Whether the agent dies when hitting the wall')
 	parser.add_argument('--share_exp', nargs='?', type=int, default = 0, 
     					help='Whether to turn on sharing samples on training')
+	parser.add_argument('--share_cut', nargs='?', type=int, default = 0, 
+    					help='Whether to cut the sharing from some epoch onwards')
 	parser.add_argument('--share_latent', nargs='?', type=int, default = 1,
 						help='Whether to join the latent spaces of actor and critic')
 	parser.add_argument('--num_episode', nargs='?', type=int, default = 10,
