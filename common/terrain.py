@@ -148,7 +148,7 @@ class Terrain:
 
             with open(os.path.join(self.save_folder, '{}_traj_{}.pkl'.format(multiprocessing.current_process().name, self.episode)), 'wb') as f:
                 pickle.dump(self.trajectory, f, pickle.HIGHEST_PROTOCOL)
-
+    
         self.episode += 1
         self.trajectory[self.episode] = [self.position]
         return (cur_x, cur_y)
@@ -180,7 +180,11 @@ class Terrain:
 
         self.trajectory[self.episode].append(self.position)
 
-        return ob, reward, done
+        start_state = self.trajectory[self.episode][0] 
+        last_state = self.position
+        redundant = len(self.trajectory[self.episode]) + self.min_dist[self.task][last_state[1], last_state[0]] - self.min_dist[self.task][start_state[1], start_state[0]]
+
+        return ob, reward, done, redundant
 
     def reach_target(self):
         cur_x, cur_y = self.position

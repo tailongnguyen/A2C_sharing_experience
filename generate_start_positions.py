@@ -2,14 +2,14 @@ import matplotlib.pyplot as plt
 import random
 import numpy as np
 import json
-from env.map import ENV_MAP
+from env.terrain import Terrain
 from env.sxsy import SXSY
 from random import randint
 
-map_array = np.array(ENV_MAP[5]['map']).astype(int)
+ter = Terrain(1)
 
-state_space = [list(z) for z in  zip(np.where(map_array != 0)[1].tolist(), np.where(map_array != 0)[0].tolist())]
-
+state_space = ter.state_space
+print(len(state_space))
 SMAP = []
 for i in range(5000):
 	ep_inits = []

@@ -1,9 +1,8 @@
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
 import random
 import numpy as np
+
+from collections import Counter
 from random import randint
 try:
     from .sxsy import SXSY
@@ -17,12 +16,21 @@ except ModuleNotFoundError:
 class Terrain:
     def __init__(self, map_index, use_laser = False):
         self.MAP = ENV_MAP[map_index]['map']
-        self.map_array = np.array(self.MAP, dtype = int)
-        self.reward_locs = [list(z) for z in  zip(np.where(self.map_array == 3)[1].tolist(), np.where(self.map_array == 3)[0].tolist())]
-        
-        self.state_space = [list(z) for z in  zip(np.where(self.map_array != 0)[1].tolist(), np.where(self.map_array != 0)[0].tolist())]
+        self.ORACLE = ENV_MAP[map_index]['oracle']
+        self.num_task = 0
 
-        self.state_to_index = np.zeros_like(self.MAP) - 1
+        for row in self.MAP:
+            characters = Counter(row)
+            if len(characters) > 2:
+                self.num_task += len(characters) - 2
+        self.map_array = np.array([[m_ for m_ in mi] for mi in self.MAP])
+        self.reward_locs = []
+        for i in range(self.num_task):
+            self.reward_locs.append([np.where(self.map_array == str(i+1))[1][0], np.where(self.map_array == str(i+1))[0][0]])
+
+        self.state_space = [list(z) for z in  zip(np.where(self.map_array != 'x')[1].tolist(), np.where(self.map_array != 'x')[0].tolist())]
+
+        self.state_to_index = np.zeros(self.map_array.shape).astype(int) - 1
         
         for i, s in enumerate(self.state_space):
             self.state_to_index[s[1]][s[0]] = i
@@ -32,8 +40,6 @@ class Terrain:
         self.action_size = 8
         self.reward_range = 1.0
         self.reward_goal = 1.0
-        
-        self.num_task = len(self.reward_locs)
 
         if not use_laser:
             self.cv_state_onehot = np.identity(len(self.state_space), dtype=int)
@@ -48,7 +54,6 @@ class Terrain:
             # self.cv_state_onehot = self.cv_state_onehot
 
         self.cv_action_onehot = np.identity(self.action_size, dtype=int)
-        self.cv_task_onehot = np.identity(len(self.reward_locs), dtype=int)
         
         self.min_dist = []
         self.advs = []
@@ -81,8 +86,8 @@ class Terrain:
         return adv
 
     def cal_min_dist(self, task_idx):
-        distance = np.zeros_like(self.map_array) - 1
-        target = [list(z) for z in  zip(np.where(self.map_array == 3)[0].tolist(), np.where(self.map_array == 3)[1].tolist())][task_idx]
+        distance = np.zeros(self.map_array.shape) - 1
+        target = self.reward_locs[task_idx][::-1]
         distance[target[0], target[1]] = 0
         move = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1], [1, -1], [-1, 1]]
 
@@ -103,8 +108,7 @@ class Terrain:
             for m in move:
 
                 neighbor = [pos[0] + m[0], pos[1] + m[1]]
-
-                if self.map_array[neighbor[0], neighbor[1]] == 0:
+                if self.map_array[neighbor[0], neighbor[1]] == 'x':
                     continue 
 
                 if not visisted[neighbor[0], neighbor[1]]:
@@ -153,57 +157,19 @@ class Terrain:
         plt.xlim([-1, self.map_array.shape[1]])
         plt.ylim([-1, self.map_array.shape[0]])
 
-        for y in range(self.map_array.shape[0]):
-            for x in range(self.map_array.shape[1]):
-                if self.MAP[y][x] == 0:
-                    plt.scatter(x, y, marker='x', color="red")
+        # for y in range(self.map_array.shape[0]):
+        #     for x in range(self.map_array.shape[1]):
+        #         if self.MAP[y][x] == 'x':
+        #             plt.scatter(x, y, marker='x', color="red")
 
-        # for (x, y) in self.state_space:
-        #     plt.scatter(x, y, marker='o', color="green", s = 5)
+        for (x, y) in self.state_space:
+            plt.scatter(x, y, marker='o', color="green", s = 5)
 
-        # rands = self.state_space[np.random.choice(range(len(self.state_space)))]
-        # plt.annotate(str(self.laser(*rands)), (rands[0], rands[1]))
 
-        # for x_pos, y_pos in self.reward_locs:
-        #     plt.scatter(x_pos, y_pos, marker='o', color="blue")
+        for x_pos, y_pos in self.reward_locs:
+            plt.scatter(x_pos, y_pos, marker='o', color="blue")
 
-        # count = np.load('count.npy')
-        # for i in range(count.shape[0]):
-        #     for j in range(count.shape[1]):
-        #         if count[i][j] > 0:                    
-        #             plt.annotate(int(count[i][j]), (i, j))
-
-        vmin = 0
-        vmax = 400
-        pts = SXSY[4]
-        s = [l for ep in pts for l in ep]
-        # s = [l for ep in pts for l in sorted(ep, key=lambda element: (element[1], element[0]))]
-
-        s = sorted(s, key=lambda element: (element[1], element[0]))
-        
-        init_count = np.zeros_like(self.state_to_index, dtype = np.float32)
-        for i, (x, y) in enumerate(s):
-            init_count[y][x] += 10 * 0.99 ** np.sqrt(i)
-
-        # print(init_count)
-        max_cnt, min_cnt = np.max(init_count), np.min(init_count)
-        sx, sy, cxy, sxy = [], [], [], []
-        for i in range(init_count.shape[0]):
-            for j in range(init_count.shape[1]):
-                if init_count[i][j] > 0:
-                    sx.append(j)
-                    sy.append(i)
-                    cxy.append((init_count[i][j] - min_cnt) * (vmax - vmin) / (max_cnt - min_cnt) + vmin)
-                    sxy.append(init_count[i][j]**5 * 200 / np.max(init_count)**5)
-        
-        cm = plt.cm.get_cmap('jet')
-        sc = plt.scatter(sx, sy, c = cxy, vmin = vmin, vmax = vmax, s = sxy, cmap = cm)
-        plt.colorbar(sc)
-
-        # # plt.scatter([self.player.x,], [self.player.y,], marker='x', color="red")
-        # # plt.pause(0.001)
         plt.show()
-        # plt.savefig('s2')
 
     def resetgame(self, task, sx, sy):
         #self.player = Player(7, 1, self)
@@ -213,6 +179,6 @@ class Terrain:
         self.task = task
             
 if __name__ == '__main__':
-    ter = Terrain(4)
-    print(ter.min_dist[0])
-    print(ter.min_dist[1])
+    ter = Terrain(2)
+    # print(ter.state_space)
+    ter.plotgame()

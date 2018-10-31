@@ -62,7 +62,7 @@ class Rollout(object):
 		
 		for task in range(self.num_task):
 			for i in range(self.num_episode):
-				[sx, sy] = self.init_maps[epoch % len(self.init_maps)][i]
+				[sx, sy] = self.init_maps[epoch % len(self.init_maps)][i % len(self.init_maps[0])]
 				train_threads.append(threading.Thread(target=self._rollout_process, args=(task, i, sx, sy, current_policy, self.num_iters, )))
 
 		# start each training thread

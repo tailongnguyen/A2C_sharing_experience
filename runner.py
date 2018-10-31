@@ -51,7 +51,8 @@ class Runner(object):
 
 		self.writer = writer
 		tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in self.PGNetwork], 0))
-		tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in self.PGNetwork], 0))
+		# tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in self.PGNetwork], 0))
+		tf.summary.scalar(test_name + "/redundants", tf.reduce_mean([policy.mean_redundant for policy in self.PGNetwork], 0))
 
 		self.write_op = tf.summary.merge_all()
 
@@ -136,7 +137,7 @@ class Runner(object):
 		return current_values
 
 	def roll_out(self, current_policy, current_values, task):
-		mb_states, mb_actions, mb_rewards, mb_values, mb_dones = [[] for _ in range(5)]
+		mb_states, mb_actions, mb_rewards, mb_values, mb_dones, mb_redundants = [[] for _ in range(6)]
 
 		states = self.current_states[task]
 
@@ -154,14 +155,14 @@ class Runner(object):
 				actions.append(act)
 				values.append(current_values[x, y, task])
 
-			next_states, rewards, dones = self.envs_task[task].step(actions)
+			next_states, rewards, dones, redundants = self.envs_task[task].step(actions)
 
 			mb_rewards.append(rewards)
 			mb_dones.append(dones)
 			mb_actions.append(actions)
 			mb_states.append(states)
 			mb_values.append(values)
-
+			mb_redundants.append(redundants)
 			states = next_states
 
 		mb_last_values = [0] * len(dones)
@@ -174,6 +175,7 @@ class Runner(object):
 		mb_actions = np.array(mb_actions).T
 		mb_rewards = np.array(mb_rewards, dtype = np.float32).T
 		mb_values = np.array(mb_values, dtype = np.float32).T
+		mb_redundants = np.array(mb_redundants, dtype = np.float32).T
 		mb_dones = np.array(mb_dones).T
 
 		self.current_states[task] = next_states
@@ -184,7 +186,7 @@ class Runner(object):
 		# print("Dones\n", mb_dones)
 		# print("values\n", mb_values)
 
-		return mb_states, mb_actions, mb_rewards, mb_values, mb_dones, mb_last_values
+		return mb_states, mb_actions, mb_rewards, mb_values, mb_dones, mb_last_values, mb_redundants
 
 	def _make_batch(self, sess, epoch):
 
@@ -238,8 +240,10 @@ class Runner(object):
 		task_actions = [[] for i in range(self.num_task)]
 		task_returns = [[] for i in range(self.num_task)]
 		task_advantages = [[] for i in range(self.num_task)]
+		task_redundants = [[] for i in range(self.num_task)]
+		task_logits = [[] for i in range(self.num_task)]
 		rewards_summary = [[] for i in range(self.num_task)]
-		true_advantages = [[] for i in range(self.num_task)]
+		# true_advantages = [[] for i in range(self.num_task)]
 
 		for task_idx in range(self.num_task):
 			'''
@@ -258,7 +262,7 @@ class Runner(object):
 			last_values = [ lv1, lv2, ..., lvn]
 		
 			'''
-			states, actions, rewards, values, dones, last_values = self.roll_out(current_policy, current_values, task_idx)
+			states, actions, rewards, values, dones, last_values, redundants = self.roll_out(current_policy, current_values, task_idx)
 			raw_task_states[task_idx] = np.concatenate(states, 0)
 			raw_task_actions[task_idx]= np.concatenate(actions, 0)
 
@@ -266,8 +270,10 @@ class Runner(object):
 			for ep_idx, ep_states in enumerate(states):
 				task_states[task_idx] += [self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]]  for s in ep_states]
 				task_actions[task_idx] += [self.env.cv_action_onehot[a] for a in actions[ep_idx]]
+				task_redundants[task_idx] += list(redundants[ep_idx])
+				task_logits[task_idx] += [current_policy[s[0], s[1], task_idx, 0] for s in ep_states]
 				rewards_summary[task_idx].append(list(rewards[ep_idx]))
-				true_advantages[task_idx] += [self.env.advs[task_idx][s[0], s[1], a] for (s, a) in zip(ep_states, actions[ep_idx])]
+				# true_advantages[task_idx] += [self.env.advs[task_idx][s[0], s[1], a] for (s, a) in zip(ep_states, actions[ep_idx])]
 						
 			if not self.use_gae:
 
@@ -310,6 +316,7 @@ class Runner(object):
 		share_observations = [[] for _ in range(self.num_task)]
 		share_actions = [[] for _ in range(self.num_task)]
 		share_advantages = [[] for _ in range(self.num_task)]
+		share_logits = [[] for _ in range(self.num_task)]
 
 		if self.share_exp:
 			assert self.num_task > 1
@@ -335,6 +342,7 @@ class Runner(object):
 
 									share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
 									share_actions[other_task].append(self.env.cv_action_onehot[act])
+									share_logits[other_task].append(current_policy[s[0], s[1], task_idx, 0])
 									share_advantages[other_task].append(task_advantages[task_idx][idx])
 
 			else:
@@ -357,6 +365,7 @@ class Runner(object):
 
 									share_observations[other_task].append(self.env.cv_state_onehot[self.env.state_to_index[s[1]][s[0]]])
 									share_actions[other_task].append(self.env.cv_action_onehot[act])
+									share_logits[other_task].append(current_policy[s[0], s[1], task_idx, 0])
 									share_advantages[other_task].append(task_advantages[task_idx][idx] * current_policy[s[0], s[1], other_task, 1][act] / importance_weight)
 
 							sharing[task_idx].append((idx, current_policy[s[0], s[1], task_idx, 1][act] / importance_weight))
@@ -366,7 +375,17 @@ class Runner(object):
 						# we must multiply the advantages of sharing positions with the importance weight and we do it exactly ONE time
 						task_advantages[task_idx][idx] = task_advantages[task_idx][idx] * iw
 
-		return task_states, task_actions, task_returns, task_advantages, rewards_summary, share_observations, share_actions, share_advantages, true_advantages
+		return  task_states, \
+				task_actions, \
+				task_returns,  \
+				task_advantages,\
+				task_logits,\
+				task_redundants, \
+				rewards_summary, \
+				share_observations, \
+				share_actions, \
+				share_advantages,\
+				share_logits
 
 	def train(self):
 		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
@@ -382,30 +401,43 @@ class Runner(object):
 			
 			# ROLLOUT SAMPLE
 			#---------------------------------------------------------------------------------------------------------------------#	
-			mb_states, mb_actions, mb_returns, mb_advantages, rewards, mbshare_states, mbshare_actions, mbshare_advantages, true_advantages = self._make_batch(sess, epoch)
+			mb_states, \
+			mb_actions, \
+			mb_returns, \
+			mb_advantages, \
+			mb_logits, \
+			mb_redundants, \
+			rewards, \
+			mbshare_states, \
+			mbshare_actions, \
+			mbshare_advantages, \
+			mbshare_logits  = self._make_batch(sess, epoch)
 			#---------------------------------------------------------------------------------------------------------------------#	
 
 			# UPDATE NETWORK
 			#---------------------------------------------------------------------------------------------------------------------#	
 			sum_dict = {}
 			for task_idx in range(self.num_task):
-				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
+				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx]) == len(mb_logits[task_idx])
+				assert len(mbshare_states[task_idx]) == len(mbshare_actions[task_idx]) == len(mbshare_advantages[task_idx]) == len(mbshare_logits[task_idx])
 
 				policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
 																				actor_states = mb_states[task_idx] + mbshare_states[task_idx],
 																				advantages = mb_advantages[task_idx] + mbshare_advantages[task_idx],
 																				actions = mb_actions[task_idx] + mbshare_actions[task_idx], 
 																				critic_states = mb_states[task_idx],
-																				returns = mb_returns[task_idx]
+																				returns = mb_returns[task_idx],
+																				task_logits = mb_logits[task_idx] + mbshare_logits[task_idx]
 																			)
 
-				correct_adv = 0
-				for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
-					if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
-						correct_adv += 1
+				# correct_adv = 0
+				# for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
+				# 	if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
+				# 		correct_adv += 1
 
+				ep_redundants = [re for re in mb_redundants[task_idx] if not np.isnan(re)]
+				sum_dict[self.PGNetwork[task_idx].mean_redundant] = np.mean(ep_redundants)
 				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
-				sum_dict[self.PGNetwork[task_idx].aloss_summary] = correct_adv / len(mb_advantages[task_idx])
 
 				if task_idx not in total_samples:
 					total_samples[task_idx] = 0
@@ -426,6 +458,8 @@ class Runner(object):
 
 			# SAVE MODEL
 			#---------------------------------------------------------------------------------------------------------------------#	
-			# if epoch % self.save_model == 0:
-			# 	saver.save(sess, 'checkpoints/' + self.save_name + '.ckpt')
+			if epoch % self.save_model == 0:
+				if not os.path.isdir('checkpoints'):
+					os.mkdir('checkpoints')
+				saver.save(sess, 'checkpoints/' + self.save_name + '.ckpt')
 			#---------------------------------------------------------------------------------------------------------------------#		

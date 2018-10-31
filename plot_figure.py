@@ -36,12 +36,14 @@ class PlotFigure(object):
 		plt.clf()
 
 		plt.figure()
+		num_rows = self.num_task // 2 + self.num_task % 2 
+		num_cols = 2 if self.num_task > 1 else 1
 		for index in range(self.num_task):
-			ax = plt.subplot(1, self.num_task, index + 1)
+			ax = plt.subplot(num_rows, num_cols, index + 1)
 			plt.title(str(epoch))
 			for y in range(self.env.map_array.shape[0]):
 				for x in range(self.env.map_array.shape[1]):
-					if self.env.MAP[y][x] != 0:
+					if self.env.MAP[y][x] != 'x':
 						self._plot_star(ax, (x, y), policy[x,y,index, 1])
 						plt.plot([x,], [y,], marker='o', markersize=1, color="green")
 					else:

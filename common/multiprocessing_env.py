@@ -11,14 +11,14 @@ def worker(remote, parent_remote, env_fn_wrapper):
     while True:
         cmd, data = remote.recv()
         if cmd == 'step':
-            ob, reward, done = env.step(data)
+            ob, reward, done, redundant = env.step(data)
             if done:
                 ob = env.reset()
                 # env.clear_plot()
                 
             # env.plotgame(data)
             # print("{} have received a message".format(multiprocessing.current_process()))
-            remote.send((ob, reward, done))
+            remote.send((ob, reward, done, redundant))
         elif cmd == 'reset':
             ob = env.reset()
             remote.send(ob)
@@ -129,8 +129,8 @@ class SubprocVecEnv(VecEnv):
     def step_wait(self):
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
-        obs, rews, dones = zip(*results)
-        return obs, rews, dones
+        obs, rews, dones, redundants = zip(*results)
+        return obs, rews, dones, redundants
 
     def reset(self):
         for remote in self.remotes:

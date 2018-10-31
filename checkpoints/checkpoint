@@ -1,0 +1,2 @@
+model_checkpoint_path: "map_4_test_4_num_task_1-share_latent-num_episode_10-num_iters_15-lr_0.005-use_gae-ec_0.01-vc_0.5-noise_argmax-joint_loss.ckpt"
+all_model_checkpoint_paths: "map_4_test_4_num_task_1-share_latent-num_episode_10-num_iters_15-lr_0.005-use_gae-ec_0.01-vc_0.5-noise_argmax-joint_loss.ckpt"

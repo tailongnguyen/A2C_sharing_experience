@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('agg')
 import tensorflow as tf
 import os 
 import time
@@ -24,7 +26,7 @@ def training(args):
 
 	env = Terrain(args.map_index, args.use_laser)
 	policies = []
-	
+	oracle_network = {}
 	for i in range(args.num_task):
 		policy_i = A2C(
 						name 					= 'A2C_' + str(i),
@@ -45,13 +47,16 @@ def training(args):
 			policy_i.set_lr_decay(args.lr, args.num_epochs * args.num_episode * args.num_iters)
 		
 		print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i), True))))
-
-		# policy_i = Other_A2C(state_size = env.cv_state_onehot.shape[1],
-		# 					action_size = env.action_size, 
-		# 					learning_rate = args.lr, 
-		# 					name = str(i))
-
 		policies.append(policy_i)
+
+	for i in range(args.num_task - 1):
+		for j in range(i+1, args.num_task):
+			oracle_network[i, j] = ZNetwork(
+										state_size = env.cv_state_onehot.shape[1],
+										action_size = 2,
+										learning_rate = args.lr,
+										name = 'oracle_{}_{}'.format(i, j)
+									)
 
 	variables = tf.trainable_variables()
 	print("Initialized networks, with {} trainable weights.".format(len(variables)))
@@ -67,11 +72,11 @@ def training(args):
 
 	suffix = []
 	for arg in vars(args):
-		exclude = ['num_tests', 'map_index', 'plot_model', 'save_model', 'num_epochs', 'max_gradient_norm', 'alpha', 'epsilon', 'joint_loss']
+		exclude = ['num_test', 'map_index', 'plot_model', 'save_model', 'num_epochs', 'max_gradient_norm', 'alpha', 'epsilon', 'joint_loss']
 		if arg in exclude:
 			continue
 
-		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'multiprocess', 'new_iw']
+		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'oracle']
 		if arg in boolean:
 			if getattr(args, arg) != 1:
 				continue
@@ -79,7 +84,7 @@ def training(args):
 				suffix.append(arg)
 				continue
 
-		if arg in ['share_decay', 'new_iw'] and getattr(args, 'share_exp') == 0:
+		if arg in ['no_iw'] and getattr(args, 'share_exp') == 0:
 			continue
 
 		if arg in ['ec', 'vc'] and getattr(args, 'joint_loss') == 0:
@@ -106,10 +111,7 @@ def training(args):
 	
 	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
 	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
-	tf.summary.scalar(test_name + "/aloss", tf.reduce_mean([policy.aloss_summary for policy in policies], 0))
-	# tf.summary.scalar(test_name + "/ploss", tf.reduce_mean([policy.ploss_summary for policy in policies], 0))
 	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-	# tf.summary.scalar(test_name + "/entropy", tf.reduce_mean([policy.entropy_summary for policy in policies], 0))
 	tf.summary.scalar(test_name + "/redundant_steps", tf.reduce_mean([policy.mean_redundant for policy in policies], 0))
 
 	write_op = tf.summary.merge_all()
@@ -117,6 +119,7 @@ def training(args):
 	multitask_agent = MultitaskPolicy(
 										map_index 			= args.map_index,
 										policies 			= policies,
+										oracle_network		= oracle_network,
 										writer 				= writer,
 										write_op 			= write_op,
 										num_task 			= args.num_task,
@@ -129,7 +132,7 @@ def training(args):
 										save_model 			= args.save_model,
 										save_name 			= test_name + "_" + suffix,
 										share_exp 			= args.share_exp,
-										new_iw				= args.new_iw,
+										oracle				= args.oracle,
 										use_laser			= args.use_laser,
 										use_gae				= args.use_gae,
 										noise_argmax		= args.noise_argmax,
@@ -139,68 +142,11 @@ def training(args):
 	multitask_agent.train(sess, saver)
 	sess.close()
 
-
-def train(args):
-
-	log_folder = 'logs/' + TIMER
-
-	suffix = []
-	for arg in vars(args):
-		exclude = ['num_tests', 'map_index', 'plot_model', 'save_model', 'num_epochs', 'max_gradient_norm', 'alpha', 'epsilon', 'multiprocess']
-		if arg in exclude:
-			continue
-
-		boolean = ['share_exp', 'share_latent', 'use_laser', 'use_gae', 'immortal', 'decay', 'noise_argmax', 'joint_loss']
-		if arg in boolean:
-			if getattr(args, arg) != 1:
-				continue
-			else:
-				suffix.append(arg)
-				continue
-
-		if arg in ['share_decay', 'new_iw'] and getattr(args, 'share_exp') == 0:
-			continue
-
-		if arg in ['ec', 'vc'] and getattr(args, 'joint_loss') == 0:
-			continue
-			
-		suffix.append(arg + "_" + str(getattr(args, arg)))
-
-	suffix = '-'.join(suffix)
-
-	if not os.path.isdir(log_folder):
-		os.mkdir(log_folder)
-
-	if os.path.isdir(os.path.join(log_folder, suffix)):
-		print("Log folder already exists. Continue training ...")
-		test_time = len(os.listdir(os.path.join(log_folder, suffix)))
-	else:
-		os.mkdir(os.path.join(log_folder, suffix))
-		test_time = 0
-	
-	if test_time == 0:
-		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
-	else:
-		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
-	
-	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
-
-	multitask_agent = Runner(args = args,
-							writer = writer,
-							gamma = 0.99,
-							lamb = 0.96,
-							test_name = test_name,
-							save_name = test_name + "_" + suffix,
-							timer = TIMER
-							)
-					
-	multitask_agent.train()
-
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Arguments')
-	parser.add_argument('--num_tests', nargs='?', type=int, default = 1, 
+	parser.add_argument('--num_test', nargs='?', type=int, default = 1, 
 						help='Number of test to run')
-	parser.add_argument('--map_index', nargs='?', type=int, default = 4, 
+	parser.add_argument('--map_index', nargs='?', type=int, default = 2, 
 						help='Index of map'),
 	parser.add_argument('--num_task', nargs='?', type=int, default = 1, 
     					help='Number of tasks to train on')
@@ -208,7 +154,7 @@ if __name__ == '__main__':
     					help='Whether the agent dies when hitting the wall')
 	parser.add_argument('--share_exp', nargs='?', type=int, default = 0, 
     					help='Whether to turn on sharing samples on training')
-	parser.add_argument('--share_latent', nargs='?', type=int, default = 1,
+	parser.add_argument('--share_latent', nargs='?', type=int, default = 0,
 						help='Whether to join the latent spaces of actor and critic')
 	parser.add_argument('--num_episode', nargs='?', type=int, default = 10,
     					help='Number of episodes to sample in each epoch')
@@ -222,10 +168,8 @@ if __name__ == '__main__':
 						help='Whether to use generalized advantage estimate')
 	parser.add_argument('--num_epochs', nargs='?', type=int, default = 2000,
 						help='Number of epochs to train')
-	parser.add_argument('--new_iw', nargs='?', type=int, default = 0,
-						help='Whether to use new importance weights')
-	parser.add_argument('--share_decay', nargs='?', type=float, default = 1.0,
-						help='threshold when sharing samples')
+	parser.add_argument('--oracle', nargs='?', type=int, default = 0,
+						help='Whether to use oracle map when sharing')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
 						help='Entropy coeff in total loss')
 	parser.add_argument('--vc', nargs='?', type=float, default = 0.5,
@@ -240,9 +184,9 @@ if __name__ == '__main__':
 						help='Plot interval')
 	parser.add_argument('--decay', nargs='?', type=int, default = 0,
 						help='Whether to decay the learning_rate')
-	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 1,
+	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 0,
 						help='Whether touse noise argmax in action sampling')
-	parser.add_argument('--joint_loss', nargs='?', type=int, default = 1,
+	parser.add_argument('--joint_loss', nargs='?', type=int, default = 0,
 						help='Whether touse noise argmax in action sampling')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
 						help='Saving interval')
@@ -250,7 +194,7 @@ if __name__ == '__main__':
 	args = parser.parse_args()
 
 	start = time.time()
-	for i in range(args.num_tests):
+	for i in range(args.num_test):
 		training(args)
 
 	print("Done in {} minutes".format((time.time() - start)/60))

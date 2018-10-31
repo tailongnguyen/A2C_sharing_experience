@@ -40,7 +40,11 @@ class RolloutThread(object):
 				break
 
 			if self.noise_argmax:
-				logit = self.policy[state[0], state[1], self.task, 0]
+				try:
+					logit = self.policy[state[0], state[1], self.task, 0]
+				except:
+					print("Why am I at {}, {}: {}".format(state[0], state[1], self.env.MAP[state[1]][state[0]]))
+					sys.exit()
 				action = noise_and_argmax(logit)
 			else:
 				pi = self.policy[state[0], state[1], self.task, 1]

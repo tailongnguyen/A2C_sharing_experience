@@ -76,6 +76,24 @@ def train(args):
 					
 	multitask_agent.train()
 
+def test(args):
+	tf.reset_default_graph()
+	writer = tf.summary.FileWriter('./')
+	multitask_agent = Runner(args = args,
+							writer = writer,
+							gamma = 0.99,
+							lamb = 0.96,
+							test_name = 'test_load_model',
+							save_name = 'test_load_model',
+							timer = ''
+							)
+# self.plot_figure = PlotFigure(self.save_name, self.env, self.num_task, os.path.join('plot', timer))
+	saver = tf.train.Saver()
+	sess = tf.Session()
+	saver.restore(sess, "checkpoints/map_4_test_4_num_task_1-share_latent-num_episode_10-num_iters_15-lr_0.005-use_gae-ec_0.01-vc_0.5-noise_argmax-joint_loss.ckpt")
+	
+	current_policy = multitask_agent._prepare_current_policy(sess, 4999)
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Arguments')
 	parser.add_argument('--num_tests', nargs='?', type=int, default = 1, 
@@ -106,7 +124,7 @@ if __name__ == '__main__':
 						help='Number of epochs to train')
 	parser.add_argument('--no_iw', nargs='?', type=int, default = 0,
 						help='Whether to use importance weights')
-	parser.add_argument('--share_decay', nargs='?', type=float, default = 0.989,
+	parser.add_argument('--share_decay', nargs='?', type=float, default = 1.0,
 						help='threshold when sharing samples')
 	parser.add_argument('--ec', nargs='?', type=float, default = 0.01,
 						help='Entropy coeff in total loss')
