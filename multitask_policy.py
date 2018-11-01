@@ -448,7 +448,7 @@ class MultitaskPolicy(object):
 									share_states[other_task].append(observations[task_idx][flat_idx])
 									share_actions[other_task].append(converted_actions[task_idx][flat_idx])
 									share_advantages[other_task].append(advantages[task_idx][flat_idx] * importance_weight)
-									share_logits[other_task].append(current_policy[state[0], state[1], task_idx, 0])
+									share_logits[other_task].append(task_logits[task_idx][flat_idx])
 
 			if not self.oracle:
 				for i in range (self.num_task-1):

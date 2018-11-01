@@ -187,7 +187,7 @@ if __name__ == '__main__':
 	parser.add_argument('--noise_argmax', nargs='?', type=int, default = 0,
 						help='Whether touse noise argmax in action sampling')
 	parser.add_argument('--joint_loss', nargs='?', type=int, default = 0,
-						help='Whether touse noise argmax in action sampling')
+						help='Whether to join loss function')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
 						help='Saving interval')
 

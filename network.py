@@ -130,6 +130,7 @@ class A2C():
                 decay = False, 
                 reuse = False):
 
+        self.name = name 
         self.max_gradient_norm  = max_gradient_norm
         self.entropy_coeff = entropy_coeff
         self.value_function_coeff = value_function_coeff
@@ -195,6 +196,16 @@ class A2C():
                 print(len(variables), variables)
             return variables
 
+    def save_model(self, sess, save_dir):
+        if not os.path.isdir(save_dir):
+            os.mkdir(save_dir)
+        save_path = os.path.join(save_dir, self.name)
+        self.saver.save(sess, save_path)
+
+    def restore_model(self, sess, save_dir):
+        save_path = os.path.join(save_dir, self.name)
+        self.saver.restore(sess, save_path)
+        
     def learn(self, sess, actor_states, critic_states, actions, returns, advantages, task_logits):
         if self.decay:
             for i in range(len(states)):
