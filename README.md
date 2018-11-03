@@ -1,23 +1,19 @@
 # A2C_sharing_experience
 Multi-task learning with Advantage Actor Critic  and sharing experience 
 
-## To run the code
+## Transfer experience from pretrained agents
 
-I implemented 3 versions: multithread (`train.py`), multiprocess (`train_multiprocess.py`) and multiprocess + ppo (`train_ppo.py`)
+Use pretrained value function and policy to estimate advantages and importance weight in shared states, respectively. We obviously do not re-train the pretrained agents.
+Specify the pretrained task by hardcoding the code (for now).
+For example,
+```
+pretrained_dir = ["logs/2018-11-01_21-12-43_test_save_model/num_task_1-num_episode_12-num_iters_50-lr_0.005-use_gae/checkpoints/"]
+if args.transfer:
+	pretrained = [0]
+else:
+	pretrained = []
+```
 
-## Noticable changes
-
-Reduce state space by removing the redundant states. Policy network and Value network can be joint or disjoint as specified in arguments. 
-
-## Notes on results
-
-- Network của anh Long hội tụ kém do để sai hàm value loss
-- Khi chạy code multithread (thường để num_episodes là 10 và numsteps là 50) thì cái share không ngon được bằng cái none (cái none hội tụ quá ngon), vừa hội tụ sau lại còn rewards thấp hơn. Xem ở `logs/2018-10-15_23-28-26_plot_adv` và `logs/2018-10-16_15-32-04_plot_adv_15` (new_iw là kiểu importance weights hiện tại, weird là nó không tốt bằng kiểu cũ)
-
-- Khi chạy code multiprocess (thường để num_episodes là 10 và numsteps là 15) thì cái share hội tụ trước nhưng rewards lại thấp hơn. 
-  -  Ý tưởng cải tiến: share decay!!, tạo cơ chế để chỉ tập trung share những epoch đầu, `share_choice = np.random.choice([1, 0], p = [share_decay ** epoch, 1 - share_decay ** epoch])`. Kết quả xem ở `logs/2018-10-19_12-05-37_multiprocess_test_noiw` (share_decay là 0.989). Ngoài ra cũng thử sharecut, tức là qua một epoch nào đấy là không share nữa, kết quả ở `logs/2018-10-17_21-54-23_multiprocess_none_vs_share_vs_sharecut`
-  -  Thay đổi importance weight: chưa nghĩ ra
--  Cải thiện chất lượng hội tụ của bằng PPO. Khi gắn PPO vào code multiprocess thì results khá là promising, share hội tụ có tốt hơn none tuy rằng độ chênh lệch không lớn. Xem ở logs/2018-10-19_15-03-32_ppo_share_vs_none
-
+means that we use pretrained agent of task `0` and the corresponding weights path is `"logs/2018-11-01_21-12-43_test_save_model/num_task_1-num_episode_12-num_iters_50-lr_0.005-use_gae/checkpoints/"`.
 
 
