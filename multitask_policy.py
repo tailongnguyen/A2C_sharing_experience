@@ -31,19 +31,39 @@ class MultitaskPolicy(object):
 			lamb,
 			plot_model,
 			save_model,
+			save_dir,
 			save_name,
 			share_exp,
 			oracle,
 			use_laser,
 			use_gae,
 			noise_argmax,
-			timer
+			timer,
+			sess,
+			pretrained = [], 
+			pretrained_dir = []
 			):
 
 		self.oracle = oracle
 		self.map_index = map_index
 		self.PGNetwork = policies
 		self.ZNetwork = oracle_network
+
+		self.pretrained = pretrained
+		self.pretrained_dir = pretrained_dir
+
+		if len(pretrained) > 0:
+			assert share_exp
+			assert len(pretrained_dir) == len(pretrained)
+
+		for task, task_dir in zip(pretrained, pretrained_dir):
+			try:
+				self.PGNetwork[task].restore_model(sess, task_dir)
+			except:
+				print("Error loading weights of task {}".format(task))
+				sys.exit()
+
+			print("Loaded pretrained weights of task {}".format(task))
 
 		self.writer = writer
 		self.write_op = write_op
@@ -56,7 +76,9 @@ class MultitaskPolicy(object):
 
 		self.gamma = gamma
 		self.lamb = lamb
+
 		self.save_name = save_name
+		self.save_dir = save_dir
 		self.plot_model = plot_model
 		self.save_model = save_model
 
@@ -248,24 +270,111 @@ class MultitaskPolicy(object):
 				converted_actions[task_idx] += [self.env.cv_action_onehot[a] for a in actions[task_idx][ep_idx]]
 				task_logits[task_idx] += [current_policy[s[0], s[1], task_idx, 0] for s in ep_states]
 
+		# Gather statistics from samples to do some miscellacious stuffs
+		# and fit to Z-training phase.
+		count_dict = {}
+
+		for task_idx in range(self.num_task):
+			ep_states = list(np.concatenate(states[task_idx]))
+			ep_actions = list(np.concatenate(actions[task_idx]))
+			redundant_steps[task_idx] = np.mean(redundant_steps[task_idx])
+
+			for state, action in zip(ep_states, ep_actions):
+				state_index = self.env.state_to_index[state[1]][state[0]]
+
+				if state_index not in count_dict:
+					count_dict[state_index] = []
+					for tidx in range(self.num_task):
+						count_dict[state_index].append([0] * self.env.action_size)
+
+				count_dict[state_index][task_idx][action] += 1
+
+		# Prepare dictionary to later give share decisions
+		share_dict = {}
+		task_mean_policy = {}
+		for task_idx in range(self.num_task):
+			for state in list(np.concatenate(states[task_idx], 0)) + list(np.concatenate(next_states[task_idx], 0)):
+				state_index = self.env.state_to_index[state[1]][state[0]]
+
+				if self.oracle:
+					# Get share information from oracle map
+					if state_index not in share_dict:
+						share_dict[state_index] = []
+						share_info = bin(self.env.ORACLE[state[1]][state[0]])[2:].zfill(self.num_task ** 2)
+						'''
+							E.g: share_info: 1111 (2 task)
+						'''
+						for tidx in range(self.num_task): 
+							share_dict[state_index].append([])
+							share_info_task = share_info[tidx*self.num_task:(tidx+1)*self.num_task]
+
+							assert len(share_info_task) == self.num_task
+							share_dict[state_index][tidx] = [int(c) for c in share_info_task]
+
+				else:
+
+					# Get share information from Z-networks
+					share_dict[state_index] = []
+
+					for tidx in range(self.num_task):
+						share_dict[state_index].append([])
+						for otidx in range(self.num_task):
+						 	share_dict[state_index][tidx].append(0)
+
+						share_dict[state_index][tidx][tidx]=1
+								
+					for tidx in range(self.num_task-1):
+						for otidx in range(tidx+1,self.num_task):
+							share_action =np.random.choice(range(2), 
+									  p= np.array(current_oracle[state[0],state[1],otidx,tidx])/sum(current_oracle[state[0],state[1],otidx,tidx]))
+
+							share_dict[state_index][tidx][otidx] = share_action
+							share_dict[state_index][otidx][tidx] = share_action
+
 		returns = [[] for i in range(self.num_task)]
 		advantages = [[] for i in range(self.num_task)]
 
 		if not self.use_gae:
 
 			for task_idx in range(self.num_task):
+
 				for ep_idx, (ep_rewards, ep_states, ep_next_states) in enumerate(zip(rewards[task_idx], states[task_idx], next_states[task_idx])):
 					assert len(ep_rewards) == len(ep_states) == len(ep_next_states)
 					ep_dones = list(np.zeros_like(ep_rewards))
 
 					if ep_rewards[-1] != 1:
-						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+						last_state = ep_next_states[-1]
+						last_state_idx = self.env.state_to_index[last_state[1]][last_state[0]]
+
+						last_value = np.mean([current_values[ep_next_states[-1][0], ep_next_states[-1][1], other_task] \
+											for other_task in range(self.num_task) \
+											if share_dict[last_state_idx][other_task][task_idx] == 1]) 
+
 						ep_returns = _discount_with_dones(ep_rewards + [last_value], ep_dones+[0], self.gamma)[:-1]
 					else:
 						ep_returns = _discount_with_dones(ep_rewards, ep_dones, self.gamma)
 
 					returns[task_idx] += ep_returns
-					ep_values = [current_values[s[0], s[1], task_idx] for s in ep_states]
+
+					importance_weights = {}
+					for s, a in zip(ep_states, actions[task_idx][ep_idx]):
+						count = 0
+						sum_policy = 0
+						for other_task in range(self.num_task):
+							if share_dict[self.env.state_to_index[s[1]][s[0]]][other_task][task_idx] == 1:
+								count += 1
+								sum_policy += current_policy[s[0], s[1], other_task, 1][a]
+
+						assert count >= 1 and sum_policy > 0
+						mean_policy = sum_policy / count
+						importance_weights[s[0], s[1]] = current_policy[s[0], s[1], task_idx, 1][a] / mean_policy
+
+					ep_values = [np.mean([current_values[s[0], s[1], other_task] \
+						    for other_task in range(self.num_task) \
+						    if share_dict[self.env.state_to_index[s[1]][s[0]]][other_task][task_idx] == 1]) * importance_weights[s[0], s[1]] \
+							for s in ep_states]
+
+					assert len(ep_values) == len(ep_states) == len(ep_returns)
 
 					# Here we calculate advantage A(s,a) = R + yV(s') - V(s)
 			    	# rewards = R + yV(s')
@@ -278,19 +387,43 @@ class MultitaskPolicy(object):
 					ep_dones = list(np.zeros_like(ep_rewards))
 
 					if ep_rewards[-1] != 1:
-						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+						last_state = ep_next_states[-1]
+						last_state_idx = self.env.state_to_index[last_state[1]][last_state[0]]
+						try:
+							last_value = np.mean([current_values[ep_next_states[-1][0], ep_next_states[-1][1], other_task] \
+												for other_task in range(self.num_task) \
+												if share_dict[last_state_idx][other_task][task_idx] == 1])
+						except KeyError:
+							print(last_state, last_state_idx)
+							sys.exit("KeyError")
+
 						returns[task_idx] += _discount_with_dones(ep_rewards + [last_value], ep_dones+[0], self.gamma)[:-1]
 					else:
 
 						returns[task_idx] += _discount_with_dones(ep_rewards, ep_dones, self.gamma)
-
-					if ep_rewards[-1] == 1:
-						ep_dones[-1] = 1
+						ep_dones[-1] = 1						
 						last_value = 0
-					else:
-						last_value = current_values[ep_next_states[-1][0], ep_next_states[-1][1], task_idx]
+					
+					importance_weights = {}
+					for s, a in zip(ep_states, actions[task_idx][ep_idx]):
+						count = 0
+						sum_policy = 0
+						for other_task in range(self.num_task):
+							if share_dict[self.env.state_to_index[s[1]][s[0]]][other_task][task_idx] == 1:
+								count += 1
+								sum_policy += current_policy[s[0], s[1], other_task, 1][a]
 
-					ep_values = [current_values[s[0], s[1], task_idx] for s in ep_states]
+						assert count >= 1 and sum_policy > 0
+						mean_policy = sum_policy / count
+						importance_weights[s[0], s[1]] = current_policy[s[0], s[1], task_idx, 1][a] / mean_policy
+
+					ep_values = [np.mean([current_values[s[0], s[1], other_task] \
+						    for other_task in range(self.num_task) \
+						    if share_dict[self.env.state_to_index[s[1]][s[0]]][other_task][task_idx] == 1]) * importance_weights[s[0], s[1]] \
+							for s in ep_states]
+
+					assert len(ep_values) == len(ep_states)
+
 					advantages[task_idx] += _generalized_advantage_estimate(ep_rewards, ep_dones, ep_values, last_value, self.gamma, self.lamb)
 
 					# returns[task_idx] += self._discount_rewards(ep_rewards, ep_next_states, task_idx, current_values)
@@ -298,233 +431,77 @@ class MultitaskPolicy(object):
 					
 				assert len(returns[task_idx]) == len(advantages[task_idx])
 
-		# Gather statistics from samples to do some miscellacious stuffs
-		# and fit to Z-training phase.
-		state_dict = {}
-		count_dict = {}
-
-		for task_idx in range(self.num_task):
-			states[task_idx] = list(np.concatenate(states[task_idx]))
-			actions[task_idx] = list(np.concatenate(actions[task_idx]))
-			redundant_steps[task_idx] = np.mean(redundant_steps[task_idx])
-
-			assert len(states[task_idx]) == len(actions[task_idx]) == len(advantages[task_idx])
-			for state, action, gae in zip(states[task_idx], actions[task_idx], advantages[task_idx]):
-				state_index = self.env.state_to_index[state[1]][state[0]]
-
-				if state_index not in state_dict:
-					state_dict[state_index] = []
-					count_dict[state_index] = []
-					for tidx in range(self.num_task):
-						state_dict[state_index].append([0.0] * self.env.action_size)
-						count_dict[state_index].append([0] * self.env.action_size)
-
-				state_dict[state_index][task_idx][action] += gae
-				count_dict[state_index][task_idx][action] += 1
-
-		# Because we will eliminate some samples when considering the clipped importance weight,
-		# we will made new placeholders to avoid sensitive deletions in current ones.
-		mb_states = [[] for _ in range(self.num_task)]
-		mb_actions = [[] for _ in range(self.num_task)]
-		mb_advantages = [[] for _ in range(self.num_task)]
-		mb_returns = [[] for _ in range(self.num_task)]
-		mb_logits = [[] for _ in range(self.num_task)]
-
-		share_states = [[] for _ in range(self.num_task)]
-		share_actions = [[] for _ in range(self.num_task)]
-		share_advantages = [[] for _ in range(self.num_task)]
-		share_logits = [[] for _ in range(self.num_task)]
-
 		z_ss, z_as, z_rs = {},{},{}
-		
-		if self.share_exp:
-			assert self.num_task > 1
-
-			# Prepare dictionary to later give share decisions
-			share_dict = {}
-			task_mean_policy = {}
-			
+		if not self.oracle:
+			state_dict = {}
 			for task_idx in range(self.num_task):
-				for flat_idx, (state, action, gae) in enumerate(zip(states[task_idx], actions[task_idx], advantages[task_idx])):
+				states[task_idx] = list(np.concatenate(states[task_idx]))
+				actions[task_idx] = list(np.concatenate(actions[task_idx]))
+
+				assert len(states[task_idx]) == len(actions[task_idx]) == len(advantages[task_idx])
+				for state, action, gae in zip(states[task_idx], actions[task_idx], advantages[task_idx]):
 					state_index = self.env.state_to_index[state[1]][state[0]]
 
-					if self.oracle:
-						# Get share information from oracle map
-						if state_index not in share_dict:
-							share_dict[state_index] = []
-							share_info = bin(self.env.ORACLE[state[1]][state[0]])[2:].zfill(self.num_task ** 2)
-							'''
-								E.g: share_info: 1111 (2 task)
-							'''
-							for tidx in range(self.num_task): 
-								share_dict[state_index].append([])
-								share_info_task = share_info[tidx*self.num_task:(tidx+1)*self.num_task]
-
-								assert len(share_info_task) == self.num_task
-								share_dict[state_index][tidx] = [int(c) for c in share_info_task]
-
-								# for otidx in range(self.num_task):
-								# 	if share_info_task[otidx] == '1':
-								# 		share_dict[state_index][tidx].append(1)
-								# 	else:
-								# 		share_dict[state_index][tidx].append(0)
-
-						# Calculate distrubtion of combination sample
-						if task_mean_policy.get((state_index, action),-1) == -1:
-							task_mean_policy[state_index, action] = []
-
-							for tidx in range(self.num_task):
-								mean_policy_action = 0.0
-								count = 0.0
-								for otidx in range(self.num_task):
-									if share_dict[state_index][tidx][otidx] == 1:
-										if otidx == tidx or count_dict[state_index][otidx][action] > 0:
-											mean_policy_action += (current_policy[state[0], state[1], otidx, 1][action])
-											count += 1	
-
-								mean_policy_action /= count
-								task_mean_policy[state_index, action].append(mean_policy_action)
-					else:
-
-						# Get share information from Z-networks
-						share_dict[state_index] = []
-
+					if state_index not in state_dict:
+						state_dict[state_index] = []
 						for tidx in range(self.num_task):
-							share_dict[state_index].append([])
-							for otidx in range(self.num_task):
-							 	share_dict[state_index][tidx].append(0)
+							state_dict[state_index].append([0.0] * self.env.action_size)
 
-							share_dict[state_index][tidx][tidx]=1
-									
-						for tidx in range(self.num_task-1):
-							for otidx in range(tidx+1,self.num_task):
-								share_action =np.random.choice(range(2), 
-										  p= np.array(current_oracle[state[0],state[1],otidx,tidx])/sum(current_oracle[state[0],state[1],otidx,tidx]))
+					state_dict[state_index][task_idx][action] += gae
 
-								share_dict[state_index][tidx][otidx] = share_action
-								share_dict[state_index][otidx][tidx] = share_action
+			for i in range (self.num_task-1):
+				for j in range(i+1, self.num_task):
+					z_ss[i,j] = []
+					z_as[i,j] = []
+					z_rs[i,j] = []
 
-						# Calculate distrubtion of combination sample
-						if task_mean_policy.get((state_index, action),-1) == -1:
-							task_mean_policy[state_index, action] = []
+			for v in state_dict.keys():
+				
+				for i in range (self.num_task):
+					if count_dict[v][i][action]>0:
+						state_dict[v][i][action] = state_dict[v][i][action] / count_dict[v][i][action]
 
-							for tidx in range(self.num_task):
-								mean_policy_action = 0.0
-								count = 0.0
-								for otidx in range(self.num_task):
-									if share_dict[state_index][tidx][otidx] == 1:
-										if otidx == tidx or count_dict[state_index][otidx][action] > 0:
-											mean_policy_action += (current_policy[state[0], state[1], otidx, 1][action])
-											count += 1	
-
-								mean_policy_action /= count
-								task_mean_policy[state_index, action].append(mean_policy_action)
-
-					# Use share_dict to make final batch of data
-					for other_task, share in enumerate(share_dict[state_index][task_idx]):
-
-						if other_task == task_idx:
-							assert share == 1
-
-						if share == 1:
-							importance_weight = current_policy[state[0], state[1], other_task, 1][action] / task_mean_policy[state_index, action][other_task]
-
-							clip_importance_weight = importance_weight
-							if clip_importance_weight > 1.2:
-								clip_importance_weight = 1.2
-							if clip_importance_weight < 0.8:
-								clip_importance_weight = 0.8	
-
-							if (importance_weight <= 1.2 and importance_weight >= 0.8) or (clip_importance_weight * gae > importance_weight * gae):
-
-								if other_task == task_idx:
-									mb_states[other_task].append(observations[task_idx][flat_idx])
-									mb_actions[other_task].append(converted_actions[task_idx][flat_idx])
-									mb_returns[other_task].append(returns[task_idx][flat_idx])
-									mb_advantages[other_task].append(advantages[task_idx][flat_idx] * importance_weight)
-									mb_logits[other_task].append(task_logits[task_idx][flat_idx])
-
-								else:
-									share_states[other_task].append(observations[task_idx][flat_idx])
-									share_actions[other_task].append(converted_actions[task_idx][flat_idx])
-									share_advantages[other_task].append(advantages[task_idx][flat_idx] * importance_weight)
-									share_logits[other_task].append(task_logits[task_idx][flat_idx])
-
-			if not self.oracle:
 				for i in range (self.num_task-1):
 					for j in range(i+1, self.num_task):
-						z_ss[i,j] = []
-						z_as[i,j] = []
-						z_rs[i,j] = []
-
-				for v in state_dict.keys():
-					
-					for i in range (self.num_task):
-						if count_dict[v][i][action]>0:
-							state_dict[v][i][action] = state_dict[v][i][action] / count_dict[v][i][action]
-
-					for i in range (self.num_task-1):
-						for j in range(i+1, self.num_task):
-							for action in range(self.env.action_size):
+						for action in range(self.env.action_size):
+						
+							z_reward = 0.0
+							#if state_dict[v][0][action]>0 and state_dict[v][1][action]>0:
+							if state_dict[v][i][action]*state_dict[v][j][action] > 0:
+								z_reward = min(abs(state_dict[v][i][action]), abs(state_dict[v][j][action]))
+								z_action = [0,1]
 							
-								z_reward = 0.0
-								#if state_dict[v][0][action]>0 and state_dict[v][1][action]>0:
-								if state_dict[v][i][action]*state_dict[v][j][action] > 0:
-									z_reward = min(abs(state_dict[v][i][action]), abs(state_dict[v][j][action]))
-									z_action = [0,1]
-								
-								if state_dict[v][i][action]*state_dict[v][j][action] < 0:
-									z_reward = min(abs(state_dict[v][i][action]), abs(state_dict[v][j][action]))
-									z_action = [1,0]
+							if state_dict[v][i][action]*state_dict[v][j][action] < 0:
+								z_reward = min(abs(state_dict[v][i][action]), abs(state_dict[v][j][action]))
+								z_action = [1,0]
 
-								if 	sum(count_dict[v][i]) == 0 and sum(count_dict[v][j]) > 0:
-									z_reward = 0.001
-									z_action = [1,0]
-								
-								if 	sum(count_dict[v][j]) == 0 and sum(count_dict[v][i]) > 0:
-									z_reward = 0.001
-									z_action = [1,0]
-								
-								if z_reward>0.0:
-									z_ss[i,j].append(self.env.cv_state_onehot[v].tolist())
-									z_as[i,j].append(z_action)
-									z_rs[i,j].append(z_reward)
+							if 	sum(count_dict[v][i]) == 0 and sum(count_dict[v][j]) > 0:
+								z_reward = 0.001
+								z_action = [1,0]
+							
+							if 	sum(count_dict[v][j]) == 0 and sum(count_dict[v][i]) > 0:
+								z_reward = 0.001
+								z_action = [1,0]
+							
+							if z_reward>0.0:
+								z_ss[i,j].append(self.env.cv_state_onehot[v].tolist())
+								z_as[i,j].append(z_action)
+								z_rs[i,j].append(z_reward)
 
-			return mb_states,\
-					 mb_actions,\
-					 mb_returns,\
-					 mb_advantages,\
-					 mb_logits,\
-					 rewards,\
-					 share_states,\
-					 share_actions,\
-					 share_advantages,\
-					 share_logits,\
-					 redundant_steps,\
-					 z_ss,\
-					 z_as,\
-					 z_rs
-
-
-		# not sharing
-		else:
-			return observations,\
-					 converted_actions,\
-					 returns,\
-					 advantages,\
-					 task_logits,\
-					 rewards,\
-					 share_states,\
-					 share_actions,\
-					 share_advantages,\
-					 share_logits,\
-					 redundant_steps,\
-					 z_ss,\
-					 z_as,\
-					 z_rs
+		return observations,\
+				 converted_actions,\
+				 returns,\
+				 advantages,\
+				 task_logits,\
+				 rewards,\
+				 redundant_steps,\
+				 z_ss,\
+				 z_as,\
+				 z_rs
 		
 		
-	def train(self, sess, saver):
+	def train(self, sess):
+
 		total_samples = {}
 
 		for epoch in range(self.num_epochs):
@@ -538,10 +515,6 @@ class MultitaskPolicy(object):
 			mb_advantages,\
 			mb_logits,\
 			rewards,\
-			mbshare_states,\
-			mbshare_actions,\
-			mbshare_advantages,\
-			mbshare_logits,\
 			mb_redundant_steps,\
 			z_ss,\
 			z_as,\
@@ -566,42 +539,41 @@ class MultitaskPolicy(object):
 			sum_dict = {}
 			for task_idx in range(self.num_task):
 
+
 				# Let's make some assertions to make sure everything is bug-free
-				if not self.share_exp:
-					assert len(mbshare_states[task_idx]) == len(mbshare_advantages[task_idx]) == len(mbshare_actions[task_idx]) == len(mbshare_logits[task_idx]) == 0
 
 				assert len(mb_states[task_idx]) == len(mb_actions[task_idx]) == len(mb_returns[task_idx]) == len(mb_advantages[task_idx])
-				assert len(mbshare_states[task_idx]) == len(mbshare_actions[task_idx]) == len(mbshare_advantages[task_idx]) == len(mbshare_logits[task_idx])
 
-				policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
-																				actor_states = mb_states[task_idx] + mbshare_states[task_idx],
-																				advantages = mb_advantages[task_idx] + mbshare_advantages[task_idx],
-																				actions = mb_actions[task_idx] + mbshare_actions[task_idx], 
-																				critic_states = mb_states[task_idx],
-																				returns = mb_returns[task_idx],
-																				task_logits = mb_logits[task_idx] + mbshare_logits[task_idx]
-																			)
+				if task_idx not in self.pretrained:
+					# We do not train the trained policies :D
+					policy_loss, value_loss, _, _ = self.PGNetwork[task_idx].learn(sess, 
+																					actor_states = mb_states[task_idx],
+																					advantages = mb_advantages[task_idx],
+																					actions = mb_actions[task_idx],
+																					critic_states = mb_states[task_idx],
+																					returns = mb_returns[task_idx],
+																					task_logits = mb_logits[task_idx]
+																				)
+
+					sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
+					sum_dict[self.PGNetwork[task_idx].mean_redundant] = mb_redundant_steps[task_idx]
+					sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
+
+					# correct_adv = 0
+					# for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
+					# 	if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
+					# 		correct_adv += 1
 
 
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
-				sum_dict[self.PGNetwork[task_idx].mean_redundant] = mb_redundant_steps[task_idx]
-				sum_dict[self.PGNetwork[task_idx].vloss_summary] = value_loss
+					# sum_dict[self.PGNetwork[task_idx].aloss_summary] =  correct_adv / len(list(np.concatenate(rewards[task_idx])))
+					# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
+					# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
+					# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
 
-				# correct_adv = 0
-				# for (estimated_adv, true_adv) in zip(mb_advantages[task_idx], true_advantages[task_idx]):
-				# 	if (estimated_adv > 0 and true_adv > 0) or (estimated_adv < 0 and true_adv < 0):
-				# 		correct_adv += 1
-
-
-				# sum_dict[self.PGNetwork[task_idx].aloss_summary] =  correct_adv / len(list(np.concatenate(rewards[task_idx])))
-				# sum_dict[self.PGNetwork[task_idx].ploss_summary] = policy_loss
-				# sum_dict[self.PGNetwork[task_idx].entropy_summary] = policy_entropy				
-				# sum_dict[self.PGNetwork[task_idx].steps_per_ep] = len(mb_states[task_idx])
-
-				if task_idx not in total_samples:
-					total_samples[task_idx] = 0
-					
-				total_samples[task_idx] += len(list(np.concatenate(rewards[task_idx])))
+					if task_idx not in total_samples:
+						total_samples[task_idx] = 0
+						
+					total_samples[task_idx] += len(list(np.concatenate(rewards[task_idx])))
 
 			#---------------------------------------------------------------------------------------------------------------------#	
 			
@@ -614,8 +586,9 @@ class MultitaskPolicy(object):
 			self.writer.flush()
 			#---------------------------------------------------------------------------------------------------------------------#	
 
-			# SAVE MODEL
-			#---------------------------------------------------------------------------------------------------------------------#	
-			if epoch % self.save_model == 0:
-				saver.save(sess, 'checkpoints/' + self.save_name + '.ckpt')
-			#---------------------------------------------------------------------------------------------------------------------#		
+		# SAVE MODEL
+		#---------------------------------------------------------------------------------------------------------------------#	
+		for i in range(self.num_task):
+			if i not in self.pretrained:
+				self.PGNetwork[i].save_model(sess, self.save_dir)
+		#---------------------------------------------------------------------------------------------------------------------#		

@@ -10,8 +10,8 @@ from datetime import datetime
 from network import *
 from multitask_policy import MultitaskPolicy
 from runner import Runner
-
 from env.terrain import Terrain
+
 
 ask = input('Would you like to create new log folder?Y/n ')
 if ask == '' or ask.lower() == 'y':
@@ -57,6 +57,7 @@ def training(args):
 										learning_rate = args.lr,
 										name = 'oracle_{}_{}'.format(i, j)
 									)
+
 
 	variables = tf.trainable_variables()
 	print("Initialized networks, with {} trainable weights.".format(len(variables)))
@@ -109,10 +110,17 @@ def training(args):
 	else:
 		writer = tf.summary.FileWriter(os.path.join(log_folder, suffix))
 	
+
+	pretrained_dir = ["logs/2018-11-01_21-12-43_test_save_model/num_task_1-num_episode_12-num_iters_50-lr_0.005-use_gae/checkpoints/"]
+	if args.transfer:
+		pretrained = [0]
+	else:
+		pretrained = []
+
 	test_name =  "map_" + str(args.map_index) + "_test_" + str(test_time)
-	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in policies], 0))
-	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for policy in policies], 0))
-	tf.summary.scalar(test_name + "/redundant_steps", tf.reduce_mean([policy.mean_redundant for policy in policies], 0))
+	tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for i, policy in enumerate(policies) if i not in pretrained], 0))
+	tf.summary.scalar(test_name + "/vloss", tf.reduce_mean([policy.vloss_summary for i, policy in enumerate(policies) if i not in pretrained], 0))
+	tf.summary.scalar(test_name + "/redundant_steps", tf.reduce_mean([policy.mean_redundant for i, policy in enumerate(policies) if i not in pretrained], 0))
 
 	write_op = tf.summary.merge_all()
 
@@ -130,16 +138,22 @@ def training(args):
 										lamb				= 0.96,
 										plot_model 			= args.plot_model,
 										save_model 			= args.save_model,
+										save_dir 			= os.path.join(log_folder, suffix, 'checkpoints'),
 										save_name 			= test_name + "_" + suffix,
 										share_exp 			= args.share_exp,
 										oracle				= args.oracle,
 										use_laser			= args.use_laser,
 										use_gae				= args.use_gae,
 										noise_argmax		= args.noise_argmax,
-										timer 				= TIMER
+										timer 				= TIMER,
+										sess 				= sess,
+										pretrained 			= pretrained,
+										pretrained_dir 		= pretrained_dir
 									)
 
-	multitask_agent.train(sess, saver)
+	# multitask_agent.train(sess)
+	multitask_agent.train(sess)
+	# multitask_agent._prepare_current(sess, 999)
 	sess.close()
 
 if __name__ == '__main__':
@@ -189,6 +203,8 @@ if __name__ == '__main__':
 	parser.add_argument('--joint_loss', nargs='?', type=int, default = 0,
 						help='Whether to join loss function')
 	parser.add_argument('--save_model', nargs='?', type=int, default = 500,
+						help='Saving interval')
+	parser.add_argument('--transfer', nargs='?', type=int, default = 0,
 						help='Saving interval')
 
 	args = parser.parse_args()

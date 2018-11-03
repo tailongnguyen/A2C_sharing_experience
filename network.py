@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import os
 
 from utils import openai_entropy, mse, LearningRateDecay
 
@@ -183,6 +184,8 @@ class A2C():
             with tf.variable_scope(name + '/joint_opt'):
                 self.train_opt_joint = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.total_loss)
 
+        self.saver = tf.train.Saver(self.find_trainable_variables(name))
+
     def set_lr_decay(self, lr_rate, nvalues):
         self.learning_rate_decayed = LearningRateDecay(v = lr_rate,
                                                        nvalues = nvalues,
@@ -197,13 +200,13 @@ class A2C():
             return variables
 
     def save_model(self, sess, save_dir):
-        if not os.path.isdir(save_dir):
-            os.mkdir(save_dir)
-        save_path = os.path.join(save_dir, self.name)
+        if not os.path.isdir(os.path.join(save_dir, self.name)):
+            os.makedirs(os.path.join(save_dir, self.name))
+        save_path = os.path.join(save_dir, self.name, self.name)
         self.saver.save(sess, save_path)
 
     def restore_model(self, sess, save_dir):
-        save_path = os.path.join(save_dir, self.name)
+        save_path = os.path.join(save_dir, self.name, self.name)
         self.saver.restore(sess, save_path)
         
     def learn(self, sess, actor_states, critic_states, actions, returns, advantages, task_logits):
