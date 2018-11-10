@@ -5,6 +5,7 @@ import random                		# Handling random number generation
 import time                  		# Handling time calculation
 import math
 import matplotlib.pyplot as plt 	# Display graphs
+from matplotlib.pyplot import figure
 import os
 
 class PlotFigure(object):
@@ -15,9 +16,14 @@ class PlotFigure(object):
 		self.num_task = num_task
 		self.save_name = save_name
 		self.save_folder = save_folder
+		self.z_map = {}
+		self.visit = np.zeros(self.env.map_array.shape, dtype = int)
+		for i in range(num_task - 1):
+			for j in range(i+1, num_task):
+				self.z_map[i, j] = np.zeros(self.env.map_array.shape, dtype = int)
 
-		if not os.path.isdir(os.path.join(self.save_folder)):
-			os.mkdir(os.path.join(self.save_folder))
+		if not os.path.isdir(save_folder):
+			os.mkdir(save_folder)
 
 	def _plot_point(self, ax, point, angle, length):
 		x, y = point
@@ -40,16 +46,22 @@ class PlotFigure(object):
 		num_cols = 2 if self.num_task > 1 else 1
 		for index in range(self.num_task):
 			ax = plt.subplot(num_rows, num_cols, index + 1)
-			plt.title(str(epoch))
 			for y in range(self.env.map_array.shape[0]):
 				for x in range(self.env.map_array.shape[1]):
 					if self.env.MAP[y][x] != 'x':
 						self._plot_star(ax, (x, y), policy[x,y,index, 1])
 						plt.plot([x,], [y,], marker='o', markersize=1, color="green")
 					else:
-						plt.scatter(x, y, marker='x', color="red")
+						plt.scatter(x, y, marker='x', color="black", s = 10)
 
 		if not os.path.isdir(os.path.join(self.save_folder, self.save_name)):
 			os.mkdir(os.path.join(self.save_folder, self.save_name))
 
-		plt.savefig(os.path.join(self.save_folder, self.save_name, str(epoch) + '.png'), bbox_inches='tight')
+		plt.savefig(os.path.join(self.save_folder, self.save_name, str(epoch) + '.png'), bbox_inches='tight', dpi=250)
+
+	def save_z(self):
+		np.save(os.path.join(self.save_folder, self.save_name, 'visit'), self.visit)
+		for i in range(self.num_task - 1):
+			for j in range(i+1, self.num_task):
+				np.save(os.path.join(self.save_folder, self.save_name, 'z_map_{}_{}'.format(i, j)), self.z_map[i, j])
+					

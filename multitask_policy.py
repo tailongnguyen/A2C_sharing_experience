@@ -347,6 +347,7 @@ class MultitaskPolicy(object):
 			for task_idx in range(self.num_task):
 				for flat_idx, (state, action, gae) in enumerate(zip(states[task_idx], actions[task_idx], advantages[task_idx])):
 					state_index = self.env.state_to_index[state[1]][state[0]]
+					self.plot_figure.visit[state[1]][state[0]] += 1
 
 					if self.oracle:
 						# Get share information from oracle map
@@ -397,10 +398,10 @@ class MultitaskPolicy(object):
 							share_dict[state_index][tidx][tidx]=1
 									
 						for tidx in range(self.num_task-1):
-							for otidx in range(tidx+1,self.num_task):
+							for otidx in range(tidx+1, self.num_task):
 								share_action =np.random.choice(range(2), 
 										  p= np.array(current_oracle[state[0],state[1],otidx,tidx])/sum(current_oracle[state[0],state[1],otidx,tidx]))
-
+							
 								share_dict[state_index][tidx][otidx] = share_action
 								share_dict[state_index][otidx][tidx] = share_action
 
@@ -427,6 +428,9 @@ class MultitaskPolicy(object):
 							assert share == 1
 
 						if share == 1:
+							if other_task > task_idx:						
+								self.plot_figure.z_map[task_idx, other_task][state[1]][state[0]] += 1
+
 							importance_weight = current_policy[state[0], state[1], other_task, 1][action] / task_mean_policy[state_index, action][other_task]
 
 							clip_importance_weight = importance_weight
@@ -468,7 +472,6 @@ class MultitaskPolicy(object):
 							for action in range(self.env.action_size):
 							
 								z_reward = 0.0
-								#if state_dict[v][0][action]>0 and state_dict[v][1][action]>0:
 								if state_dict[v][i][action]*state_dict[v][j][action] > 0:
 									z_reward = min(abs(state_dict[v][i][action]), abs(state_dict[v][j][action]))
 									z_action = [0,1]
@@ -524,7 +527,7 @@ class MultitaskPolicy(object):
 					 z_rs
 		
 		
-	def train(self, sess, saver):
+	def train(self, sess, save_dir):
 		total_samples = {}
 
 		for epoch in range(self.num_epochs):
@@ -614,8 +617,11 @@ class MultitaskPolicy(object):
 			self.writer.flush()
 			#---------------------------------------------------------------------------------------------------------------------#	
 
-			# SAVE MODEL
-			#---------------------------------------------------------------------------------------------------------------------#	
-			if epoch % self.save_model == 0:
-				saver.save(sess, 'checkpoints/' + self.save_name + '.ckpt')
-			#---------------------------------------------------------------------------------------------------------------------#		
+		# SAVE MODEL
+		#---------------------------------------------------------------------------------------------------------------------#	
+		for znet in self.ZNetwork.values():
+			znet.save_model(sess, save_dir)
+			
+		#---------------------------------------------------------------------------------------------------------------------#		
+
+		self.plot_figure.save_z()

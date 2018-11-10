@@ -139,7 +139,7 @@ def training(args):
 										timer 				= TIMER
 									)
 
-	multitask_agent.train(sess, saver)
+	multitask_agent.train(sess, os.path.join(log_folder, suffix, 'checkpoints'))
 	sess.close()
 
 if __name__ == '__main__':

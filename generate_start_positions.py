@@ -6,7 +6,7 @@ from env.terrain import Terrain
 from env.sxsy import SXSY
 from random import randint
 
-ter = Terrain(1)
+ter = Terrain(3)
 
 state_space = ter.state_space
 print(len(state_space))

@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import os
 
 from utils import openai_entropy, mse, LearningRateDecay
 
@@ -88,10 +89,18 @@ class ZNetwork:
         initial = tf.random_uniform(shape, minval=-d, maxval=d)
         return tf.Variable(initial, name=name)
 
+    def find_trainable_variables(self, key, printing = False):
+        with tf.variable_scope(key):
+            variables = tf.trainable_variables(key)
+            if printing:
+                print(len(variables), variables)
+            return variables
+
     def __init__(self, state_size, action_size, learning_rate, name='ZNetwork'):
         self.state_size = state_size
         self.action_size = action_size
         self.learning_rate = learning_rate
+        self.name = name
 
         with tf.variable_scope(name):
             self.inputs= tf.placeholder(tf.float32, [None, self.state_size])
@@ -113,6 +122,18 @@ class ZNetwork:
             self.loss = tf.reduce_mean(self.neg_log_prob * self.rewards)
             
             self.train_opt = tf.train.RMSPropOptimizer(self.learning_rate).minimize(self.loss)
+            
+        self.saver = tf.train.Saver(self.find_trainable_variables(name))
+
+    def save_model(self, sess, save_dir):
+        if not os.path.isdir(os.path.join(save_dir, self.name)):
+            os.makedirs(os.path.join(save_dir, self.name))
+        save_path = os.path.join(save_dir, self.name, self.name)
+        self.saver.save(sess, save_path)
+
+    def restore_model(self, sess, save_dir):
+        save_path = os.path.join(save_dir, self.name, self.name)
+        self.saver.restore(sess, save_path)
 
 class A2C():
     def __init__(self, 
